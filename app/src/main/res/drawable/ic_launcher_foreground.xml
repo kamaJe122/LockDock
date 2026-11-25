@@ -1,0 +1,24 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Clock bar at top -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M38,31h32c2.2,0 4,1.8 4,4v4c0,2.2 -1.8,4 -4,4H38c-2.2,0 -4,-1.8 -4,-4v-4C34,32.8 35.8,31 38,31z" />
+    <!-- Two iOS lock screen circular rings + pill below -->
+    <path
+        android:strokeColor="#7CC4FF"
+        android:strokeWidth="3.5"
+        android:fillColor="#33FFFFFF"
+        android:pathData="M34,59m-9,0a9,9 0,1 1,18 0a9,9 0,1 1,-18 0" />
+    <path
+        android:fillColor="#59FFFFFF"
+        android:strokeColor="#99FFFFFF"
+        android:strokeWidth="2"
+        android:pathData="M56,50h22c4.4,0 8,3.6 8,8v2c0,4.4 -3.6,8 -8,8H56c-4.4,0 -8,-3.6 -8,-8v-2C48,53.6 51.6,50 56,50z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M55,56.5h14v2.5h-14zM55,61h20v2h-20z" />
+</vector>

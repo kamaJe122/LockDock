@@ -1,0 +1,11 @@
+<resources>
+    <string name="app_name">LockDock 鎖屏小工具</string>
+    <string name="widget_ios_shelf_name">iPhone 風格鎖屏組合列 (4格)</string>
+    <string name="widget_ios_shelf_desc">模仿 iPhone 鎖定畫面的 4 格毛玻璃圓環與膠囊小工具列，支援免解鎖互動與自選 App 捷徑</string>
+    <string name="widget_todo_memo_name">iPhone 風格待辦與備忘卡</string>
+    <string name="widget_todo_memo_desc">在鎖定畫面直接勾選待辦事項、查看置頂備忘錄，點擊免解鎖快速新增筆記</string>
+    <string name="widget_km_calendar_name">KM 同款鎖屏月曆＋行程 (4×2 相容鎖屏)</string>
+    <string name="widget_km_calendar_desc">專為 Pixel Android 17 原生 4 格鎖定畫面打造的月曆＋右側可上下滑動 14 天系統行事曆行程小工具</string>
+    <string name="accessibility_service_label">LockDock 主鎖定畫面時鐘下方小工具列</string>
+    <string name="accessibility_service_description">僅用於偵測手機是否處於鎖定畫面，以便在鎖定畫面時鐘下方顯示您自訂的小工具與第三方小工具（如 KM 桌面行事曆），解鎖後自動隱藏，絕不讀取螢幕文字或個人資料。</string>
+</resources>

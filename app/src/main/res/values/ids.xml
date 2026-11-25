@@ -1,0 +1,30 @@
+<resources>
+    <item name="shelf_root" type="id" />
+    <item name="shelf_inner_box" type="id" />
+    <item name="inline_container" type="id" />
+    <item name="inline_text" type="id" />
+
+    <item name="slot_0_container" type="id" />
+    <item name="slot_0_img" type="id" />
+    <item name="slot_0_header" type="id" />
+    <item name="slot_0_title" type="id" />
+    <item name="slot_0_subtitle" type="id" />
+
+    <item name="slot_1_container" type="id" />
+    <item name="slot_1_img" type="id" />
+    <item name="slot_1_header" type="id" />
+    <item name="slot_1_title" type="id" />
+    <item name="slot_1_subtitle" type="id" />
+
+    <item name="slot_2_container" type="id" />
+    <item name="slot_2_img" type="id" />
+    <item name="slot_2_header" type="id" />
+    <item name="slot_2_title" type="id" />
+    <item name="slot_2_subtitle" type="id" />
+
+    <item name="slot_3_container" type="id" />
+    <item name="slot_3_img" type="id" />
+    <item name="slot_3_header" type="id" />
+    <item name="slot_3_title" type="id" />
+    <item name="slot_3_subtitle" type="id" />
+</resources>
