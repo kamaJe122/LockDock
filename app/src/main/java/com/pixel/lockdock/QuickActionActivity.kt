@@ -163,6 +163,34 @@ class QuickActionActivity : ComponentActivity() {
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text(
+                                    text = "↔️ 全部小工具統一左右寬度",
+                                    color = Color(0xFF80DEEA),
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = WidgetCornerStyler.describeWidthStyle(config.widgetWidthPercent),
+                                    color = Color(0xFFE0F7FA),
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                            androidx.compose.material3.Slider(
+                                value = config.widgetWidthPercent.toFloat(),
+                                onValueChange = { newW ->
+                                    save(config.copy(widgetWidthPercent = (newW + 0.5f).toInt()))
+                                },
+                                valueRange = WidgetCornerStyler.MIN_WIDTH_PERCENT.toFloat()..WidgetCornerStyler.MAX_WIDTH_PERCENT.toFloat()
+                            )
+
+                            Spacer(modifier = Modifier.height(4.dp))
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
                                     text = "🎨 全部小工具統一圓角",
                                     color = Color(0xFFCE93D8),
                                     fontSize = 13.sp,

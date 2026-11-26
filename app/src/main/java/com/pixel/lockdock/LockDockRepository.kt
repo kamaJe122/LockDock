@@ -65,7 +65,8 @@ data class HostedWidgetEntry(
     val label: String,
     val enabled: Boolean = true,
     val heightDp: Int = 195,
-    val scalePercent: Int = 100
+    val scalePercent: Int = 100,
+    val extraTrimDp: Int = 0
 )
 
 data class LockDockConfig(
@@ -95,7 +96,10 @@ data class LockDockConfig(
     val calendarDaysAhead: Int = 14,
     val calendarShowAllDay: Boolean = true,
     val widgetCornerRadiusDp: Int = WidgetCornerStyler.DEFAULT_CORNER_RADIUS_DP,
-    val syncCircleSlotsWithCornerRadius: Boolean = true
+    val syncCircleSlotsWithCornerRadius: Boolean = true,
+    val widgetWidthPercent: Int = WidgetCornerStyler.DEFAULT_WIDTH_PERCENT,
+    val autoAlignHostedWidgetEdges: Boolean = true,
+    val stretchTopCapsuleToUnifiedWidth: Boolean = false
 ) {
     companion object {
         fun defaultSlots(): List<SlotItem> = listOf(
@@ -186,7 +190,8 @@ object LockDockRepository {
                                 label = h.optString("label", "桌面小工具"),
                                 enabled = h.optBoolean("enabled", true),
                                 heightDp = h.optInt("heightDp", 195).coerceIn(60, 400),
-                                scalePercent = h.optInt("scalePercent", 100).coerceIn(75, 100)
+                                scalePercent = h.optInt("scalePercent", 100).coerceIn(75, 100),
+                                extraTrimDp = h.optInt("extraTrimDp", 0).coerceIn(-12, 24)
                             )
                         )
                     }
@@ -200,7 +205,8 @@ object LockDockRepository {
                             label = "已嵌入小工具",
                             enabled = true,
                             heightDp = obj.optInt("hostedWidgetHeightDp", 195).coerceIn(60, 400),
-                            scalePercent = 100
+                            scalePercent = 100,
+                            extraTrimDp = 0
                         )
                     )
                 }
@@ -251,7 +257,16 @@ object LockDockRepository {
                     WidgetCornerStyler.MIN_CORNER_RADIUS_DP,
                     WidgetCornerStyler.MAX_CORNER_RADIUS_DP
                 ),
-                syncCircleSlotsWithCornerRadius = obj.optBoolean("syncCircleSlotsWithCornerRadius", true)
+                syncCircleSlotsWithCornerRadius = obj.optBoolean("syncCircleSlotsWithCornerRadius", true),
+                widgetWidthPercent = obj.optInt(
+                    "widgetWidthPercent",
+                    WidgetCornerStyler.DEFAULT_WIDTH_PERCENT
+                ).coerceIn(
+                    WidgetCornerStyler.MIN_WIDTH_PERCENT,
+                    WidgetCornerStyler.MAX_WIDTH_PERCENT
+                ),
+                autoAlignHostedWidgetEdges = obj.optBoolean("autoAlignHostedWidgetEdges", true),
+                stretchTopCapsuleToUnifiedWidth = obj.optBoolean("stretchTopCapsuleToUnifiedWidth", false)
             )
             if (isNewDay) {
                 saveConfig(context, cfg, notify = false)
@@ -288,6 +303,9 @@ object LockDockRepository {
             put("calendarShowAllDay", config.calendarShowAllDay)
             put("widgetCornerRadiusDp", config.widgetCornerRadiusDp)
             put("syncCircleSlotsWithCornerRadius", config.syncCircleSlotsWithCornerRadius)
+            put("widgetWidthPercent", config.widgetWidthPercent)
+            put("autoAlignHostedWidgetEdges", config.autoAlignHostedWidgetEdges)
+            put("stretchTopCapsuleToUnifiedWidth", config.stretchTopCapsuleToUnifiedWidth)
 
             val slotsArr = JSONArray()
             config.slots.forEach { s ->
@@ -327,6 +345,7 @@ object LockDockRepository {
                         put("enabled", h.enabled)
                         put("heightDp", h.heightDp)
                         put("scalePercent", h.scalePercent)
+                        put("extraTrimDp", h.extraTrimDp)
                     }
                 )
             }

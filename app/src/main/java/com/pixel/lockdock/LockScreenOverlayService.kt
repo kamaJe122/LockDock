@@ -338,8 +338,7 @@ class LockScreenOverlayService : AccessibilityService() {
             val container = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
                 gravity = Gravity.CENTER_HORIZONTAL
-                val padH = dpToPx(8)
-                setPadding(padH, 0, padH, 0)
+                setPadding(0, 0, 0, 0)
                 visibility = View.GONE
             }
 
@@ -502,6 +501,22 @@ class LockScreenOverlayService : AccessibilityService() {
 
         applyVerticalBlockOrder(container, cfg.shelfBelowHosted)
 
+        val screenW = getPhysicalScreenBounds().width().coerceAtLeast(dpToPx(240))
+        val targetWidthPx = (screenW * WidgetCornerStyler.widthFraction(cfg))
+            .roundToInt()
+            .coerceIn(dpToPx(180), screenW)
+        val spacingPx = dpToPx(cfg.blockSpacingDp)
+
+        updateBlockWidthAndTopMargin(quickDismissRow, targetWidthPx, 0)
+        updateBlockWidthAndTopMargin(capsuleFrame, targetWidthPx, 0)
+        val shelfTopMargin = if (cfg.shelfBelowHosted) {
+            if (showAnyHosted || showCapsule) spacingPx else 0
+        } else {
+            if (showCapsule) spacingPx else 0
+        }
+        updateBlockWidthAndTopMargin(shelfFrame, targetWidthPx, shelfTopMargin)
+        updateBlockWidthAndTopMargin(hostedListContainer, targetWidthPx, 0)
+
         val targetY = dpToPx(cfg.overlayYOffsetDp)
         val targetAlpha = (cfg.overlayAlphaPercent / 100f).coerceIn(0.45f, 1f)
         container.alpha = targetAlpha
@@ -515,6 +530,7 @@ class LockScreenOverlayService : AccessibilityService() {
 
         if (cfg.showQuickDismissPill) {
             quickDismissRow?.visibility = View.VISIBLE
+            quickDismissRow?.setPadding(0, 0, 0, dpToPx(4))
             (quickDismissRow?.getChildAt(0) as? TextView)?.background =
                 WidgetCornerStyler.createGlassDrawable(
                     context = this,
@@ -544,13 +560,36 @@ class LockScreenOverlayService : AccessibilityService() {
             shelfFrame?.visibility = View.GONE
         }
 
-        syncHostedWidgets(cfg, force = forceRebindHosted || becameVisible)
+        val firstHostedTopMargin = if (cfg.shelfBelowHosted) {
+            if (showCapsule) spacingPx else 0
+        } else {
+            if (showShelf || showCapsule) spacingPx else 0
+        }
+        syncHostedWidgets(
+            cfg = cfg,
+            targetWidthPx = targetWidthPx,
+            firstTopMarginPx = firstHostedTopMargin,
+            betweenMarginPx = spacingPx,
+            force = forceRebindHosted || becameVisible
+        )
 
         if (becameVisible) {
             container.visibility = View.VISIBLE
         }
 
         startWatcherIfNeeded()
+    }
+
+    private fun updateBlockWidthAndTopMargin(view: View?, widthPx: Int, topMarginPx: Int) {
+        val v = view ?: return
+        val lp = (v.layoutParams as? LinearLayout.LayoutParams)
+            ?: LinearLayout.LayoutParams(widthPx, LinearLayout.LayoutParams.WRAP_CONTENT)
+        if (lp.width != widthPx || lp.topMargin != topMarginPx || lp.gravity != Gravity.CENTER_HORIZONTAL) {
+            lp.width = widthPx
+            lp.topMargin = topMarginPx
+            lp.gravity = Gravity.CENTER_HORIZONTAL
+            v.layoutParams = lp
+        }
     }
 
     private fun rebuildCapsuleOnly(cfg: LockDockConfig) {
@@ -585,7 +624,13 @@ class LockScreenOverlayService : AccessibilityService() {
         }
     }
 
-    private fun syncHostedWidgets(cfg: LockDockConfig, force: Boolean) {
+    private fun syncHostedWidgets(
+        cfg: LockDockConfig,
+        targetWidthPx: Int,
+        firstTopMarginPx: Int,
+        betweenMarginPx: Int,
+        force: Boolean
+    ) {
         val listLayout = hostedListContainer ?: return
         val enabledEntries = cfg.hostedWidgets.filter { it.enabled }
 
@@ -596,20 +641,26 @@ class LockScreenOverlayService : AccessibilityService() {
             return
         }
 
-        val sig = "${cfg.blockSpacingDp}|" + enabledEntries.joinToString("|") {
-            "${it.appWidgetId}:${it.heightDp}:${it.scalePercent}"
-        }
+        val sig = enabledEntries.joinToString("|") { "${it.appWidgetId}" }
 
         if (sig == currentHostedSignature && listLayout.childCount == enabledEntries.size && !force) {
             for (i in enabledEntries.indices) {
-                val wrapper = listLayout.getChildAt(i) as? FrameLayout ?: continue
-                val hv = wrapper.getChildAt(0) as? android.appwidget.AppWidgetHostView
-                val scale = (enabledEntries[i].scalePercent / 100f).coerceIn(0.75f, 1f)
-                WidgetCornerStyler.applyHostedWidgetCorners(
-                    wrapper = wrapper,
-                    hostView = hv,
+                val entry = enabledEntries[i]
+                val wrapper = listLayout.getChildAt(i) as? AlignedHostedWidgetContainer ?: continue
+                val desiredH = dpToPx(entry.heightDp)
+                val desiredTop = if (i == 0) firstTopMarginPx else betweenMarginPx
+                val lp = wrapper.layoutParams as? LinearLayout.LayoutParams
+                if (lp != null && (lp.width != targetWidthPx || lp.height != desiredH || lp.topMargin != desiredTop)) {
+                    lp.width = targetWidthPx
+                    lp.height = desiredH
+                    lp.topMargin = desiredTop
+                    wrapper.layoutParams = lp
+                }
+                wrapper.updateAlignmentConfig(
+                    scalePercent = entry.scalePercent,
                     radiusDp = cfg.widgetCornerRadiusDp,
-                    scale = scale
+                    autoAlign = cfg.autoAlignHostedWidgetEdges,
+                    trimDp = entry.extraTrimDp
                 )
             }
             listLayout.visibility = View.VISIBLE
@@ -617,16 +668,14 @@ class LockScreenOverlayService : AccessibilityService() {
         }
 
         listLayout.removeAllViews()
-        val screenWidthPx = resources.displayMetrics.widthPixels - dpToPx(16)
         val density = resources.displayMetrics.density.coerceAtLeast(1f)
-        val spacingPx = dpToPx(cfg.blockSpacingDp)
 
         var addedCount = 0
-        for (entry in enabledEntries) {
+        enabledEntries.forEachIndexed { idx, entry ->
             val scale = (entry.scalePercent / 100f).coerceIn(0.75f, 1f)
-            val virtualWidthPx = (screenWidthPx / scale).roundToInt()
+            val virtualWidthPx = (targetWidthPx / scale).roundToInt()
             val virtualHeightPx = (dpToPx(entry.heightDp) / scale).roundToInt()
-            val virtualWidthDp = (virtualWidthPx / density).roundToInt().coerceAtLeast(380)
+            val virtualWidthDp = (virtualWidthPx / density).roundToInt().coerceAtLeast(390)
             val virtualHeightDp = (virtualHeightPx / density).roundToInt().coerceAtLeast(60)
 
             val hostView = LockDockWidgetHostManager.createConfiguredHostView(
@@ -634,35 +683,24 @@ class LockScreenOverlayService : AccessibilityService() {
                 appWidgetId = entry.appWidgetId,
                 heightDp = virtualHeightDp,
                 virtualWidthDp = virtualWidthDp
-            ) ?: continue
+            ) ?: return@forEachIndexed
 
-            val wrapper = FrameLayout(this).apply {
-                clipChildren = true
-                clipToPadding = false
+            val wrapper = AlignedHostedWidgetContainer(this).apply {
                 layoutParams = LinearLayout.LayoutParams(
-                    screenWidthPx,
+                    targetWidthPx,
                     dpToPx(entry.heightDp)
                 ).apply {
-                    topMargin = spacingPx
+                    topMargin = if (idx == 0) firstTopMarginPx else betweenMarginPx
                 }
-            }
-
-            hostView.scaleX = scale
-            hostView.scaleY = scale
-            wrapper.addView(
-                hostView,
-                FrameLayout.LayoutParams(
-                    virtualWidthPx,
-                    virtualHeightPx,
-                    Gravity.CENTER
+                bindHostView(
+                    view = hostView,
+                    widgetId = entry.appWidgetId,
+                    scalePercent = entry.scalePercent,
+                    radiusDp = cfg.widgetCornerRadiusDp,
+                    autoAlign = cfg.autoAlignHostedWidgetEdges,
+                    trimDp = entry.extraTrimDp
                 )
-            )
-            WidgetCornerStyler.applyHostedWidgetCorners(
-                wrapper = wrapper,
-                hostView = hostView,
-                radiusDp = cfg.widgetCornerRadiusDp,
-                scale = scale
-            )
+            }
             listLayout.addView(wrapper)
             addedCount++
         }

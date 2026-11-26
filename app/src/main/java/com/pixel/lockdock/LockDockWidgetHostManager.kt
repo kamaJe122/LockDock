@@ -21,18 +21,25 @@ class LockDockHostView(context: Context) : AppWidgetHostView(context) {
 
     fun setTargetCornerRadiusPx(radiusPx: Float) {
         targetCornerRadiusPx = radiusPx
-        WidgetCornerStyler.applyToHostViewContent(this, radiusPx)
+        if (parent !is AlignedHostedWidgetContainer) {
+            WidgetCornerStyler.applyToHostViewContent(this, radiusPx)
+        }
     }
 
     override fun updateAppWidget(remoteViews: RemoteViews?) {
         super.updateAppWidget(remoteViews)
         setPadding(0, 0, 0, 0)
-        WidgetCornerStyler.applyToHostViewContent(this, targetCornerRadiusPx)
+        val alignedParent = parent as? AlignedHostedWidgetContainer
+        if (alignedParent != null) {
+            alignedParent.onHostWidgetUpdated()
+        } else {
+            WidgetCornerStyler.applyToHostViewContent(this, targetCornerRadiusPx)
+        }
     }
 
     override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
         super.onLayout(changed, left, top, right, bottom)
-        if (changed) {
+        if (changed && parent !is AlignedHostedWidgetContainer) {
             WidgetCornerStyler.applyToHostViewContent(this, targetCornerRadiusPx)
         }
     }

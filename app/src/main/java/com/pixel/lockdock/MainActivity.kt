@@ -1489,7 +1489,7 @@ private fun BlockVisibilityControlSection(
             BlockControlCard(
                 badge = "區塊 ${idx + 3}",
                 title = entry.label,
-                subtitle = "高度 ${entry.heightDp}dp · 寬度 ${entry.scalePercent}%",
+                subtitle = "高度 ${entry.heightDp}dp · 左右對齊 ${WidgetCornerStyler.widthPercent(config)}% · 內容 ${entry.scalePercent}%",
                 checked = entry.enabled,
                 onCheckedChange = { on ->
                     val updated = config.hostedWidgets.mapIndexed { i, e ->
@@ -1564,7 +1564,7 @@ private fun BlockVisibilityControlSection(
                             valueRange = 60f..380f
                         )
                         Text(
-                            text = "寬度縮放比例：${entry.scalePercent}%",
+                            text = "內容字體／版面縮放：${entry.scalePercent}%（外框左右寬度維持與全部小工具對齊）",
                             color = Color(0xFFB8C7E0),
                             fontSize = 12.sp
                         )
@@ -1577,6 +1577,41 @@ private fun BlockVisibilityControlSection(
                                 onUpdateConfig(config.copy(hostedWidgets = updated))
                             },
                             valueRange = 75f..100f
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            val sign = if (entry.extraTrimDp > 0) "+${entry.extraTrimDp}" else "${entry.extraTrimDp}"
+                            Text(
+                                text = "左右邊緣微調補償：$sign dp",
+                                color = Color(0xFF80CBC4),
+                                fontSize = 12.sp
+                            )
+                            if (entry.extraTrimDp != 0) {
+                                TextButton(
+                                    onClick = {
+                                        val updated = config.hostedWidgets.mapIndexed { i, e ->
+                                            if (i == idx) e.copy(extraTrimDp = 0) else e
+                                        }
+                                        onUpdateConfig(config.copy(hostedWidgets = updated))
+                                    },
+                                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp)
+                                ) {
+                                    Text("歸零", fontSize = 11.sp, color = Color(0xFF80CBC4))
+                                }
+                            }
+                        }
+                        Slider(
+                            value = entry.extraTrimDp.toFloat(),
+                            onValueChange = { newTrim ->
+                                val updated = config.hostedWidgets.mapIndexed { i, e ->
+                                    if (i == idx) e.copy(extraTrimDp = newTrim.roundToInt()) else e
+                                }
+                                onUpdateConfig(config.copy(hostedWidgets = updated))
+                            },
+                            valueRange = -12f..24f
                         )
                         OutlinedButton(
                             onClick = {
@@ -1609,6 +1644,11 @@ private fun BlockVisibilityControlSection(
                 fontWeight = FontWeight.Bold
             )
         }
+
+        UnifiedWidthAlignmentCard(
+            config = config,
+            onUpdateConfig = onUpdateConfig
+        )
 
         UnifiedCornerRadiusCard(
             config = config,
@@ -1829,6 +1869,139 @@ private fun BlockControlCard(
 }
 
 @Composable
+private fun UnifiedWidthAlignmentCard(
+    config: LockDockConfig,
+    onUpdateConfig: (LockDockConfig) -> Unit
+) {
+    val currentPct = WidgetCornerStyler.widthPercent(config)
+    val presets = listOf(
+        76 to "76% 窄版",
+        84 to "84% 精緻",
+        90 to "90% 舒適",
+        94 to "94% 標準",
+        98 to "98% 微邊",
+        100 to "100% 滿版"
+    )
+
+    Surface(
+        shape = RoundedCornerShape(18.dp),
+        color = Color(0xFF1A2938),
+        modifier = Modifier
+            .fillMaxWidth()
+            .border(1.dp, Color(0x664DD0E1), RoundedCornerShape(18.dp))
+    ) {
+        Column(
+            modifier = Modifier.padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "↔️ 全部小工具統一左右寬度",
+                    color = Color(0xFF80DEEA),
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Surface(
+                    shape = RoundedCornerShape(999.dp),
+                    color = Color(0x334DD0E1)
+                ) {
+                    Text(
+                        text = WidgetCornerStyler.describeWidthStyle(currentPct),
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp),
+                        color = Color(0xFFE0F7FA),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+
+            Text(
+                text = "強制讓 4 格小工具列、發票載具、KM 行事曆等所有小工具的左右兩側邊界完全切齊同寬，並可自由拉動整體寬窄！",
+                color = Color(0xFFB8C7E0),
+                fontSize = 11.sp
+            )
+
+            Slider(
+                value = currentPct.toFloat(),
+                onValueChange = { next ->
+                    onUpdateConfig(config.copy(widgetWidthPercent = next.roundToInt()))
+                },
+                valueRange = WidgetCornerStyler.MIN_WIDTH_PERCENT.toFloat()..WidgetCornerStyler.MAX_WIDTH_PERCENT.toFloat()
+            )
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                presets.forEach { (pct, label) ->
+                    val selected = currentPct == pct
+                    AssistChip(
+                        onClick = { onUpdateConfig(config.copy(widgetWidthPercent = pct)) },
+                        label = {
+                            Text(
+                                text = label,
+                                fontSize = 11.sp,
+                                fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium
+                            )
+                        },
+                        colors = AssistChipDefaults.assistChipColors(
+                            containerColor = if (selected) Color(0x554DD0E1) else Color(0x18FFFFFF),
+                            labelColor = if (selected) Color(0xFFE0FFFF) else Color(0xFFD0D8E8)
+                        )
+                    )
+                }
+            }
+
+            HorizontalDivider(color = Color(0x22FFFFFF))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = "✨ 自動消除第三方小工具內建透明白邊／縮排（讓月曆與條碼左右完全切齊）",
+                    color = Color.White,
+                    fontSize = 12.sp,
+                    modifier = Modifier.weight(1f)
+                )
+                Switch(
+                    checked = config.autoAlignHostedWidgetEdges,
+                    onCheckedChange = {
+                        onUpdateConfig(config.copy(autoAlignHostedWidgetEdges = it))
+                    }
+                )
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = "📏 頂部資訊膠囊也拉滿至相同左右寬度",
+                    color = Color.White,
+                    fontSize = 12.sp,
+                    modifier = Modifier.weight(1f)
+                )
+                Switch(
+                    checked = config.stretchTopCapsuleToUnifiedWidth,
+                    onCheckedChange = {
+                        onUpdateConfig(config.copy(stretchTopCapsuleToUnifiedWidth = it))
+                    }
+                )
+            }
+        }
+    }
+}
+
+@Composable
 private fun UnifiedCornerRadiusCard(
     config: LockDockConfig,
     onUpdateConfig: (LockDockConfig) -> Unit
@@ -1964,6 +2137,7 @@ private fun IphoneLockScreenPreviewCard(
     val pillShape = RoundedCornerShape(WidgetCornerStyler.innerPillRadiusDp(config).dp)
     val slot1x1Shape = RoundedCornerShape(WidgetCornerStyler.slot1x1RadiusDp(config).dp)
     val capsuleShape = RoundedCornerShape(WidgetCornerStyler.capsuleRadiusDp(config).dp)
+    val unifiedWidthFraction = WidgetCornerStyler.widthFraction(config)
 
     @Composable
     fun RenderShelfPreview() {
@@ -2042,54 +2216,44 @@ private fun IphoneLockScreenPreviewCard(
     fun RenderHostedPreviews() {
         val hostedRadiusDp = WidgetCornerStyler.outerRadiusDp(config)
         config.hostedWidgets.filter { it.enabled }.forEach { entry ->
-            val scale = (entry.scalePercent / 100f).coerceIn(0.75f, 1f)
             Spacer(modifier = Modifier.height(config.blockSpacingDp.dp))
-            key(entry.appWidgetId, entry.heightDp, entry.scalePercent, resumeGeneration) {
+            key(entry.appWidgetId, resumeGeneration) {
                 AndroidView(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(entry.heightDp.dp)
-                        .clip(RoundedCornerShape(hostedRadiusDp.dp)),
+                        .height(entry.heightDp.dp),
                     factory = { ctx ->
-                        FrameLayout(ctx).apply {
-                            clipChildren = true
-                            clipToPadding = false
-                            val density = ctx.resources.displayMetrics.density.coerceAtLeast(1f)
-                            val availWidthPx = ctx.resources.displayMetrics.widthPixels - (56 * density).roundToInt()
-                            val virtW = (availWidthPx / scale).roundToInt()
-                            val virtH = ((entry.heightDp * density) / scale).roundToInt()
-                            val virtWDp = (virtW / density).roundToInt().coerceAtLeast(390)
-                            val virtHDp = (virtH / density).roundToInt().coerceAtLeast(60)
+                        val density = ctx.resources.displayMetrics.density.coerceAtLeast(1f)
+                        val scale = (entry.scalePercent / 100f).coerceIn(0.75f, 1f)
+                        val approxWidthPx = ((ctx.resources.displayMetrics.widthPixels - 36 * density) * unifiedWidthFraction).roundToInt()
+                        val virtW = (approxWidthPx / scale).roundToInt()
+                        val virtH = ((entry.heightDp * density) / scale).roundToInt()
+                        val virtWDp = (virtW / density).roundToInt().coerceAtLeast(390)
+                        val virtHDp = (virtH / density).roundToInt().coerceAtLeast(60)
 
-                            val hv = LockDockWidgetHostManager.createConfiguredHostView(
-                                context = ctx,
-                                appWidgetId = entry.appWidgetId,
-                                heightDp = virtHDp,
-                                virtualWidthDp = virtWDp
-                            )
-                            if (hv != null) {
-                                hv.scaleX = scale
-                                hv.scaleY = scale
-                                addView(
-                                    hv,
-                                    FrameLayout.LayoutParams(virtW, virtH, Gravity.CENTER)
-                                )
-                            }
-                            WidgetCornerStyler.applyHostedWidgetCorners(
-                                wrapper = this,
-                                hostView = hv,
+                        val hv = LockDockWidgetHostManager.createConfiguredHostView(
+                            context = ctx,
+                            appWidgetId = entry.appWidgetId,
+                            heightDp = virtHDp,
+                            virtualWidthDp = virtWDp
+                        )
+                        AlignedHostedWidgetContainer(ctx).apply {
+                            bindHostView(
+                                view = hv,
+                                widgetId = entry.appWidgetId,
+                                scalePercent = entry.scalePercent,
                                 radiusDp = hostedRadiusDp,
-                                scale = scale
+                                autoAlign = config.autoAlignHostedWidgetEdges,
+                                trimDp = entry.extraTrimDp
                             )
                         }
                     },
                     update = { wrapper ->
-                        val hv = wrapper.getChildAt(0) as? android.appwidget.AppWidgetHostView
-                        WidgetCornerStyler.applyHostedWidgetCorners(
-                            wrapper = wrapper,
-                            hostView = hv,
+                        wrapper.updateAlignmentConfig(
+                            scalePercent = entry.scalePercent,
                             radiusDp = hostedRadiusDp,
-                            scale = scale
+                            autoAlign = config.autoAlignHostedWidgetEdges,
+                            trimDp = entry.extraTrimDp
                         )
                     }
                 )
@@ -2111,10 +2275,11 @@ private fun IphoneLockScreenPreviewCard(
                 )
             )
             .border(2.dp, Color(0x38FFFFFF), RoundedCornerShape(28.dp))
-            .padding(horizontal = 12.dp, vertical = 14.dp)
+            .padding(horizontal = 2.dp, vertical = 14.dp),
+        contentAlignment = Alignment.TopCenter
     ) {
         Column(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth(unifiedWidthFraction),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Text(
@@ -2130,11 +2295,16 @@ private fun IphoneLockScreenPreviewCard(
                 Spacer(modifier = Modifier.height(4.dp))
                 Box(
                     modifier = Modifier
+                        .then(
+                            if (config.stretchTopCapsuleToUnifiedWidth) Modifier.fillMaxWidth()
+                            else Modifier
+                        )
                         .clip(capsuleShape)
                         .background(Color(0x29FFFFFF))
                         .border(1.dp, Color(0x55FFFFFF), capsuleShape)
                         .clickable { onTapInlinePill() }
-                        .padding(horizontal = 14.dp, vertical = 4.dp)
+                        .padding(horizontal = 14.dp, vertical = 4.dp),
+                    contentAlignment = Alignment.Center
                 ) {
                     Text(
                         text = IosShelfWidgetProvider.formatInlineText(context, config),

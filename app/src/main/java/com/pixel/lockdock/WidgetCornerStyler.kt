@@ -23,12 +23,36 @@ object WidgetCornerStyler {
     const val MIN_CORNER_RADIUS_DP = 0
     const val MAX_CORNER_RADIUS_DP = 42
 
+    const val DEFAULT_WIDTH_PERCENT = 94
+    const val MIN_WIDTH_PERCENT = 72
+    const val MAX_WIDTH_PERCENT = 100
+
     private val SLOT_CONTAINER_IDS = intArrayOf(
         R.id.slot_0_container,
         R.id.slot_1_container,
         R.id.slot_2_container,
         R.id.slot_3_container
     )
+
+    fun widthPercent(config: LockDockConfig): Int {
+        return config.widgetWidthPercent.coerceIn(MIN_WIDTH_PERCENT, MAX_WIDTH_PERCENT)
+    }
+
+    fun widthFraction(config: LockDockConfig): Float {
+        return widthPercent(config) / 100f
+    }
+
+    fun describeWidthStyle(pct: Int): String {
+        val clamped = pct.coerceIn(MIN_WIDTH_PERCENT, MAX_WIDTH_PERCENT)
+        return when {
+            clamped >= 100 -> "100% 螢幕滿版"
+            clamped >= 97 -> "${clamped}% 極窄邊距"
+            clamped >= 92 -> "${clamped}% 標準對齊"
+            clamped >= 86 -> "${clamped}% 舒適留白"
+            clamped >= 80 -> "${clamped}% 精緻適中"
+            else -> "${clamped}% 窄版集中"
+        }
+    }
 
     fun outerRadiusDp(config: LockDockConfig): Int {
         return config.widgetCornerRadiusDp.coerceIn(MIN_CORNER_RADIUS_DP, MAX_CORNER_RADIUS_DP)
@@ -96,6 +120,9 @@ object WidgetCornerStyler {
     }
 
     fun applyShelfInflatedCorners(context: Context, rootView: View, config: LockDockConfig) {
+        val shelfBoxView = rootView.findViewById<View>(R.id.shelf_inner_box)
+        val shelfVisible = shelfBoxView?.visibility == View.VISIBLE
+
         rootView.findViewById<View>(R.id.inline_container)?.let { inlineBox ->
             inlineBox.background = createGlassDrawable(
                 context = context,
@@ -103,6 +130,17 @@ object WidgetCornerStyler {
                 fillColor = Color.argb(0x38, 0x1A, 0x20, 0x30),
                 strokeColor = Color.argb(0x45, 0xFF, 0xFF, 0xFF)
             )
+            (inlineBox.layoutParams as? ViewGroup.MarginLayoutParams)?.let { lp ->
+                lp.width = if (config.stretchTopCapsuleToUnifiedWidth) {
+                    ViewGroup.LayoutParams.MATCH_PARENT
+                } else {
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                }
+                if (!shelfVisible) {
+                    lp.bottomMargin = 0
+                }
+                inlineBox.layoutParams = lp
+            }
         }
 
         rootView.findViewById<View>(R.id.shelf_inner_box)?.let { shelfBox ->
