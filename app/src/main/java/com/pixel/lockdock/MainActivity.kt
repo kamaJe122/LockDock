@@ -542,10 +542,7 @@ fun LockDockStudioScreen(
                         0 -> BlockVisibilityControlSection(
                             config = config,
                             isAccessibilityActive = isAccessibilityActive,
-                            onUpdateConfig = {
-                                updateAndSave(it)
-                                resumeGeneration++
-                            },
+                            onUpdateConfig = { updateAndSave(it) },
                             onChangeCapsuleMode = { showInlinePickerDialog = true },
                             onAddSlotToShelf = { showAddWidgetSheet = true },
                             onEditSlotAt = { idx -> editingSlotIndex = idx },
@@ -1613,6 +1610,11 @@ private fun BlockVisibilityControlSection(
             )
         }
 
+        UnifiedCornerRadiusCard(
+            config = config,
+            onUpdateConfig = onUpdateConfig
+        )
+
         HorizontalDivider(color = Color(0x24FFFFFF))
 
         // v1.8 Zero-Interference Instant Unlock & Auto-Hide Section
@@ -1827,6 +1829,120 @@ private fun BlockControlCard(
 }
 
 @Composable
+private fun UnifiedCornerRadiusCard(
+    config: LockDockConfig,
+    onUpdateConfig: (LockDockConfig) -> Unit
+) {
+    val currentRadius = WidgetCornerStyler.outerRadiusDp(config)
+    val presets = listOf(
+        0 to "0° 直角",
+        10 to "10° 微圓",
+        18 to "18° 適中",
+        24 to "24° 標準",
+        32 to "32° 大圓",
+        42 to "42° 全圓膠囊"
+    )
+
+    Surface(
+        shape = RoundedCornerShape(18.dp),
+        color = Color(0xFF1E223A),
+        modifier = Modifier
+            .fillMaxWidth()
+            .border(1.dp, Color(0x66CE93D8), RoundedCornerShape(18.dp))
+    ) {
+        Column(
+            modifier = Modifier.padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "🎨 全部小工具統一圓角弧度",
+                    color = Color(0xFFE1BEE7),
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Surface(
+                    shape = RoundedCornerShape(999.dp),
+                    color = Color(0x33CE93D8)
+                ) {
+                    Text(
+                        text = WidgetCornerStyler.describeCornerStyle(currentRadius),
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp),
+                        color = Color(0xFFF3E5F5),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+
+            Text(
+                text = "拖曳滑桿或點選預設角度，頂部膠囊、4 格小工具列、月曆／待辦卡與所有嵌入小工具的圓角會同步一起變化！",
+                color = Color(0xFFB8C7E0),
+                fontSize = 11.sp
+            )
+
+            Slider(
+                value = currentRadius.toFloat(),
+                onValueChange = { next ->
+                    onUpdateConfig(config.copy(widgetCornerRadiusDp = next.roundToInt()))
+                },
+                valueRange = WidgetCornerStyler.MIN_CORNER_RADIUS_DP.toFloat()..WidgetCornerStyler.MAX_CORNER_RADIUS_DP.toFloat()
+            )
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                presets.forEach { (deg, label) ->
+                    val selected = currentRadius == deg
+                    AssistChip(
+                        onClick = { onUpdateConfig(config.copy(widgetCornerRadiusDp = deg)) },
+                        label = {
+                            Text(
+                                text = label,
+                                fontSize = 11.sp,
+                                fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium
+                            )
+                        },
+                        colors = AssistChipDefaults.assistChipColors(
+                            containerColor = if (selected) Color(0x55CE93D8) else Color(0x18FFFFFF),
+                            labelColor = if (selected) Color(0xFFFFF3FF) else Color(0xFFD0D8E8)
+                        )
+                    )
+                }
+            }
+
+            HorizontalDivider(color = Color(0x22FFFFFF))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = "🔘 1×1 圓環格（電量／喝水／手電筒）外框也跟著變方角／圓角",
+                    color = Color.White,
+                    fontSize = 12.sp,
+                    modifier = Modifier.weight(1f)
+                )
+                Switch(
+                    checked = config.syncCircleSlotsWithCornerRadius,
+                    onCheckedChange = {
+                        onUpdateConfig(config.copy(syncCircleSlotsWithCornerRadius = it))
+                    }
+                )
+            }
+        }
+    }
+}
+
+@Composable
 private fun IphoneLockScreenPreviewCard(
     config: LockDockConfig,
     currentTimeStr: String,
@@ -1844,6 +1960,11 @@ private fun IphoneLockScreenPreviewCard(
     val showAddPlaceholder = !config.hideEmptySlotsOnLockScreen && usedTotalSpan < 4
     val emptyCount = if (showAddPlaceholder) (4 - enabledSlotsWithIdx.sumOf { it.second.type.span }).coerceAtLeast(0) else 0
 
+    val outerShape = RoundedCornerShape(WidgetCornerStyler.outerRadiusDp(config).dp)
+    val pillShape = RoundedCornerShape(WidgetCornerStyler.innerPillRadiusDp(config).dp)
+    val slot1x1Shape = RoundedCornerShape(WidgetCornerStyler.slot1x1RadiusDp(config).dp)
+    val capsuleShape = RoundedCornerShape(WidgetCornerStyler.capsuleRadiusDp(config).dp)
+
     @Composable
     fun RenderShelfPreview() {
         if (!config.showIosShelfInOverlay) return
@@ -1857,9 +1978,9 @@ private fun IphoneLockScreenPreviewCard(
                 .then(
                     if (config.showShelfOuterFrame) {
                         Modifier
-                            .clip(RoundedCornerShape(22.dp))
+                            .clip(outerShape)
                             .background(Color(0x280D111C))
-                            .border(1.5.dp, Color(0x66FFFFFF), RoundedCornerShape(22.dp))
+                            .border(1.5.dp, Color(0x66FFFFFF), outerShape)
                     } else {
                         Modifier
                     }
@@ -1885,9 +2006,9 @@ private fun IphoneLockScreenPreviewCard(
                         modifier = Modifier
                             .weight(2f)
                             .fillMaxHeight()
-                            .clip(RoundedCornerShape(16.dp))
+                            .clip(pillShape)
                             .background(Color(0x38FFFFFF))
-                            .border(1.dp, Color(0x55FFFFFF), RoundedCornerShape(16.dp))
+                            .border(1.dp, Color(0x55FFFFFF), pillShape)
                             .clickable { onTapExistingSlot(realIdx) }
                             .padding(horizontal = 10.dp, vertical = 5.dp),
                         verticalArrangement = Arrangement.Center
@@ -1905,9 +2026,9 @@ private fun IphoneLockScreenPreviewCard(
                         .weight(1f, fill = false)
                         .fillMaxHeight()
                         .aspectRatio(1f)
-                        .clip(CircleShape)
+                        .clip(slot1x1Shape)
                         .background(Color(0x1FFFFFFF))
-                        .border(1.dp, Color(0x6682B1FF), CircleShape)
+                        .border(1.dp, Color(0x6682B1FF), slot1x1Shape)
                         .clickable { onTapAddSlot() },
                     contentAlignment = Alignment.Center
                 ) {
@@ -1919,20 +2040,22 @@ private fun IphoneLockScreenPreviewCard(
 
     @Composable
     fun RenderHostedPreviews() {
+        val hostedRadiusDp = WidgetCornerStyler.outerRadiusDp(config)
         config.hostedWidgets.filter { it.enabled }.forEach { entry ->
+            val scale = (entry.scalePercent / 100f).coerceIn(0.75f, 1f)
             Spacer(modifier = Modifier.height(config.blockSpacingDp.dp))
             key(entry.appWidgetId, entry.heightDp, entry.scalePercent, resumeGeneration) {
                 AndroidView(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(entry.heightDp.dp),
+                        .height(entry.heightDp.dp)
+                        .clip(RoundedCornerShape(hostedRadiusDp.dp)),
                     factory = { ctx ->
                         FrameLayout(ctx).apply {
-                            clipChildren = false
+                            clipChildren = true
                             clipToPadding = false
                             val density = ctx.resources.displayMetrics.density.coerceAtLeast(1f)
                             val availWidthPx = ctx.resources.displayMetrics.widthPixels - (56 * density).roundToInt()
-                            val scale = (entry.scalePercent / 100f).coerceIn(0.75f, 1f)
                             val virtW = (availWidthPx / scale).roundToInt()
                             val virtH = ((entry.heightDp * density) / scale).roundToInt()
                             val virtWDp = (virtW / density).roundToInt().coerceAtLeast(390)
@@ -1952,7 +2075,22 @@ private fun IphoneLockScreenPreviewCard(
                                     FrameLayout.LayoutParams(virtW, virtH, Gravity.CENTER)
                                 )
                             }
+                            WidgetCornerStyler.applyHostedWidgetCorners(
+                                wrapper = this,
+                                hostView = hv,
+                                radiusDp = hostedRadiusDp,
+                                scale = scale
+                            )
                         }
+                    },
+                    update = { wrapper ->
+                        val hv = wrapper.getChildAt(0) as? android.appwidget.AppWidgetHostView
+                        WidgetCornerStyler.applyHostedWidgetCorners(
+                            wrapper = wrapper,
+                            hostView = hv,
+                            radiusDp = hostedRadiusDp,
+                            scale = scale
+                        )
                     }
                 )
             }
@@ -1992,9 +2130,9 @@ private fun IphoneLockScreenPreviewCard(
                 Spacer(modifier = Modifier.height(4.dp))
                 Box(
                     modifier = Modifier
-                        .clip(RoundedCornerShape(999.dp))
+                        .clip(capsuleShape)
                         .background(Color(0x29FFFFFF))
-                        .border(1.dp, Color(0x55FFFFFF), RoundedCornerShape(999.dp))
+                        .border(1.dp, Color(0x55FFFFFF), capsuleShape)
                         .clickable { onTapInlinePill() }
                         .padding(horizontal = 14.dp, vertical = 4.dp)
                 ) {
@@ -2028,6 +2166,7 @@ private fun ComposeCircleSlotPreview(
     config: LockDockConfig,
     batteryInfo: Pair<Int, Boolean>
 ) {
+    val slotShape = RoundedCornerShape(WidgetCornerStyler.slot1x1RadiusDp(config).dp)
     val (progress, centerText, bottomLabel, ringColor) = when (item.type) {
         SlotWidgetType.BATTERY_RING -> {
             val (lvl, chg) = batteryInfo
@@ -2054,8 +2193,9 @@ private fun ComposeCircleSlotPreview(
     Box(
         modifier = modifier
             .aspectRatio(1f)
-            .clip(CircleShape)
-            .background(Color(0x38FFFFFF)),
+            .clip(slotShape)
+            .background(Color(0x38FFFFFF))
+            .border(1.dp, Color(0x55FFFFFF), slotShape),
         contentAlignment = Alignment.Center
     ) {
         Canvas(modifier = Modifier.fillMaxSize().padding(6.dp)) {
@@ -2109,6 +2249,11 @@ private fun NativeAndroid17GuideSection(
             .padding(18.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
+        UnifiedCornerRadiusCard(
+            config = config,
+            onUpdateConfig = onUpdateConfig
+        )
+
         Surface(
             shape = RoundedCornerShape(16.dp),
             color = Color(0xFF212B46)

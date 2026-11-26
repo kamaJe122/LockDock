@@ -51,9 +51,9 @@ object AppUpdater {
     fun getCurrentVersionInfo(context: Context): Pair<Int, String> {
         return try {
             val pInfo = context.packageManager.getPackageInfo(context.packageName, 0)
-            pInfo.longVersionCode.toInt() to (pInfo.versionName ?: "1.8.0")
+            pInfo.longVersionCode.toInt() to (pInfo.versionName ?: "1.9.0")
         } catch (_: Exception) {
-            8 to "1.8.0"
+            9 to "1.9.0"
         }
     }
 

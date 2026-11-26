@@ -9,7 +9,44 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Process
 import android.util.SizeF
+import android.widget.RemoteViews
 import kotlin.math.roundToInt
+
+class LockDockHostView(context: Context) : AppWidgetHostView(context) {
+    private var targetCornerRadiusPx: Float = 0f
+
+    init {
+        setPadding(0, 0, 0, 0)
+    }
+
+    fun setTargetCornerRadiusPx(radiusPx: Float) {
+        targetCornerRadiusPx = radiusPx
+        WidgetCornerStyler.applyToHostViewContent(this, radiusPx)
+    }
+
+    override fun updateAppWidget(remoteViews: RemoteViews?) {
+        super.updateAppWidget(remoteViews)
+        setPadding(0, 0, 0, 0)
+        WidgetCornerStyler.applyToHostViewContent(this, targetCornerRadiusPx)
+    }
+
+    override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
+        super.onLayout(changed, left, top, right, bottom)
+        if (changed) {
+            WidgetCornerStyler.applyToHostViewContent(this, targetCornerRadiusPx)
+        }
+    }
+}
+
+private class LockDockAppWidgetHost(context: Context, hostId: Int) : AppWidgetHost(context, hostId) {
+    override fun onCreateView(
+        context: Context,
+        appWidgetId: Int,
+        appWidget: AppWidgetProviderInfo?
+    ): AppWidgetHostView {
+        return LockDockHostView(context)
+    }
+}
 
 data class SystemWidgetCandidate(
     val info: AppWidgetProviderInfo,
@@ -45,7 +82,7 @@ object LockDockWidgetHostManager {
                 ensureListening(again)
                 again
             } else {
-                val created = AppWidgetHost(appCtx, HOST_ID)
+                val created = LockDockAppWidgetHost(appCtx, HOST_ID)
                 ensureListening(created)
                 sharedHost = created
                 created

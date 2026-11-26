@@ -51,11 +51,14 @@ class KmCalendarWidgetProvider : AppWidgetProvider() {
             appWidgetManager: AppWidgetManager,
             appWidgetIds: IntArray
         ) {
+            val config = LockDockRepository.loadConfig(context)
+            val cardRadius = WidgetCornerStyler.outerRadiusDp(config)
             val hasPerm = KmCalendarHelper.hasCalendarPermission(context)
             val monthBmp = KmCalendarHelper.renderKmMonthBitmap()
 
             for (appWidgetId in appWidgetIds) {
                 val views = RemoteViews(context.packageName, R.layout.widget_km_calendar)
+                WidgetCornerStyler.applyRemoteViewsOutlineRadius(views, R.id.km_card_root, cardRadius)
                 views.setImageViewBitmap(R.id.km_month_image, monthBmp)
 
                 val svcIntent = Intent(context, KmCalendarRemoteViewsService::class.java).apply {

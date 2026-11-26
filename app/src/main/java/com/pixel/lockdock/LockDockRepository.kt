@@ -93,7 +93,9 @@ data class LockDockConfig(
     val hideOnCallAndAlarm: Boolean = true,
     val hostedWidgets: List<HostedWidgetEntry> = emptyList(),
     val calendarDaysAhead: Int = 14,
-    val calendarShowAllDay: Boolean = true
+    val calendarShowAllDay: Boolean = true,
+    val widgetCornerRadiusDp: Int = WidgetCornerStyler.DEFAULT_CORNER_RADIUS_DP,
+    val syncCircleSlotsWithCornerRadius: Boolean = true
 ) {
     companion object {
         fun defaultSlots(): List<SlotItem> = listOf(
@@ -241,7 +243,15 @@ object LockDockRepository {
                 hideOnCallAndAlarm = obj.optBoolean("hideOnCallAndAlarm", true),
                 hostedWidgets = parsedHosted,
                 calendarDaysAhead = obj.optInt("calendarDaysAhead", 14).coerceIn(1, 60),
-                calendarShowAllDay = obj.optBoolean("calendarShowAllDay", true)
+                calendarShowAllDay = obj.optBoolean("calendarShowAllDay", true),
+                widgetCornerRadiusDp = obj.optInt(
+                    "widgetCornerRadiusDp",
+                    WidgetCornerStyler.DEFAULT_CORNER_RADIUS_DP
+                ).coerceIn(
+                    WidgetCornerStyler.MIN_CORNER_RADIUS_DP,
+                    WidgetCornerStyler.MAX_CORNER_RADIUS_DP
+                ),
+                syncCircleSlotsWithCornerRadius = obj.optBoolean("syncCircleSlotsWithCornerRadius", true)
             )
             if (isNewDay) {
                 saveConfig(context, cfg, notify = false)
@@ -276,6 +286,8 @@ object LockDockRepository {
             put("hideOnCallAndAlarm", config.hideOnCallAndAlarm)
             put("calendarDaysAhead", config.calendarDaysAhead)
             put("calendarShowAllDay", config.calendarShowAllDay)
+            put("widgetCornerRadiusDp", config.widgetCornerRadiusDp)
+            put("syncCircleSlotsWithCornerRadius", config.syncCircleSlotsWithCornerRadius)
 
             val slotsArr = JSONArray()
             config.slots.forEach { s ->
@@ -388,6 +400,6 @@ object LockDockRepository {
             KmCalendarWidgetProvider.updateWidgets(appContext, manager, kmCalIds)
         }
 
-        LockScreenOverlayService.requestRefresh(forceRebindHosted = true)
+        LockScreenOverlayService.requestRefresh(forceRebindHosted = false)
     }
 }

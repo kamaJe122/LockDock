@@ -109,6 +109,11 @@ class IosShelfWidgetProvider : AppWidgetProvider() {
             } else {
                 views.setViewVisibility(R.id.inline_container, View.VISIBLE)
                 views.setTextViewText(R.id.inline_text, formatInlineText(context, config))
+                WidgetCornerStyler.applyRemoteViewsOutlineRadius(
+                    views,
+                    R.id.inline_container,
+                    WidgetCornerStyler.capsuleRadiusDp(config)
+                )
                 val quickEditPi = DeviceStateHelper.createActivityPendingIntent(
                     context,
                     900,
@@ -130,7 +135,13 @@ class IosShelfWidgetProvider : AppWidgetProvider() {
                 "setBackgroundResource",
                 if (config.showShelfOuterFrame) R.drawable.bg_frosted_shelf else 0
             )
+            WidgetCornerStyler.applyRemoteViewsOutlineRadius(
+                views,
+                R.id.shelf_inner_box,
+                if (config.showShelfOuterFrame) WidgetCornerStyler.outerRadiusDp(config) else 0
+            )
 
+            val pillRadius = WidgetCornerStyler.innerPillRadiusDp(config)
             normalized.forEachIndexed { index, item ->
                 if (index >= CONTAINER_IDS.size) return@forEachIndexed
                 val containerId = CONTAINER_IDS[index]
@@ -149,6 +160,7 @@ class IosShelfWidgetProvider : AppWidgetProvider() {
                     views.setTextViewText(HEADER_IDS[index], header)
                     views.setTextViewText(TITLE_IDS[index], title)
                     views.setTextViewText(SUBTITLE_IDS[index], subtitle)
+                    WidgetCornerStyler.applyRemoteViewsOutlineRadius(views, containerId, pillRadius)
                 }
 
                 val pi = buildSlotPendingIntent(context, index, item)

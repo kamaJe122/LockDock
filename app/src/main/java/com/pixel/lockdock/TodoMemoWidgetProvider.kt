@@ -34,6 +34,17 @@ class TodoMemoWidgetProvider : AppWidgetProvider() {
             val config = LockDockRepository.loadConfig(context)
             val views = RemoteViews(context.packageName, R.layout.widget_todo_memo_card)
 
+            WidgetCornerStyler.applyRemoteViewsOutlineRadius(
+                views,
+                R.id.card_root,
+                WidgetCornerStyler.outerRadiusDp(config)
+            )
+            WidgetCornerStyler.applyRemoteViewsOutlineRadius(
+                views,
+                R.id.btn_quick_add,
+                WidgetCornerStyler.capsuleRadiusDp(config)
+            )
+
             val doneCount = config.todos.count { it.done }
             views.setTextViewText(
                 R.id.card_header_title,
@@ -51,10 +62,12 @@ class TodoMemoWidgetProvider : AppWidgetProvider() {
             views.setOnClickPendingIntent(R.id.btn_quick_add, quickEditPi)
             views.setOnClickPendingIntent(R.id.card_memo_text, quickEditPi)
 
+            val rowRadius = WidgetCornerStyler.todoRowRadiusDp(config)
             ROW_IDS.forEachIndexed { idx, viewId ->
                 if (idx < config.todos.size) {
                     val item = config.todos[idx]
                     views.setViewVisibility(viewId, View.VISIBLE)
+                    WidgetCornerStyler.applyRemoteViewsOutlineRadius(views, viewId, rowRadius)
                     val prefix = if (item.done) "✓ " else "○ "
                     views.setTextViewText(viewId, prefix + item.text)
                     views.setTextColor(

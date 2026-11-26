@@ -513,7 +513,18 @@ class LockScreenOverlayService : AccessibilityService() {
 
         val becameVisible = container.visibility != View.VISIBLE
 
-        quickDismissRow?.visibility = if (cfg.showQuickDismissPill) View.VISIBLE else View.GONE
+        if (cfg.showQuickDismissPill) {
+            quickDismissRow?.visibility = View.VISIBLE
+            (quickDismissRow?.getChildAt(0) as? TextView)?.background =
+                WidgetCornerStyler.createGlassDrawable(
+                    context = this,
+                    radiusDp = WidgetCornerStyler.capsuleRadiusDp(cfg),
+                    fillColor = Color.argb(115, 16, 22, 38),
+                    strokeColor = Color.argb(110, 255, 255, 255)
+                )
+        } else {
+            quickDismissRow?.visibility = View.GONE
+        }
 
         if (showCapsule) {
             capsuleFrame?.visibility = View.VISIBLE
@@ -552,6 +563,7 @@ class LockScreenOverlayService : AccessibilityService() {
                 showShelfRowBlock = false
             )
             val inflated = rv.apply(applicationContext, cap)
+            WidgetCornerStyler.applyShelfInflatedCorners(this, inflated, cfg)
             cap.removeAllViews()
             cap.addView(inflated)
         }
@@ -567,6 +579,7 @@ class LockScreenOverlayService : AccessibilityService() {
                 showShelfRowBlock = true
             )
             val inflated = rv.apply(applicationContext, shelf)
+            WidgetCornerStyler.applyShelfInflatedCorners(this, inflated, cfg)
             shelf.removeAllViews()
             shelf.addView(inflated)
         }
@@ -587,7 +600,18 @@ class LockScreenOverlayService : AccessibilityService() {
             "${it.appWidgetId}:${it.heightDp}:${it.scalePercent}"
         }
 
-        if (!force && sig == currentHostedSignature && listLayout.childCount > 0) {
+        if (sig == currentHostedSignature && listLayout.childCount == enabledEntries.size && !force) {
+            for (i in enabledEntries.indices) {
+                val wrapper = listLayout.getChildAt(i) as? FrameLayout ?: continue
+                val hv = wrapper.getChildAt(0) as? android.appwidget.AppWidgetHostView
+                val scale = (enabledEntries[i].scalePercent / 100f).coerceIn(0.75f, 1f)
+                WidgetCornerStyler.applyHostedWidgetCorners(
+                    wrapper = wrapper,
+                    hostView = hv,
+                    radiusDp = cfg.widgetCornerRadiusDp,
+                    scale = scale
+                )
+            }
             listLayout.visibility = View.VISIBLE
             return
         }
@@ -613,7 +637,7 @@ class LockScreenOverlayService : AccessibilityService() {
             ) ?: continue
 
             val wrapper = FrameLayout(this).apply {
-                clipChildren = false
+                clipChildren = true
                 clipToPadding = false
                 layoutParams = LinearLayout.LayoutParams(
                     screenWidthPx,
@@ -632,6 +656,12 @@ class LockScreenOverlayService : AccessibilityService() {
                     virtualHeightPx,
                     Gravity.CENTER
                 )
+            )
+            WidgetCornerStyler.applyHostedWidgetCorners(
+                wrapper = wrapper,
+                hostView = hostView,
+                radiusDp = cfg.widgetCornerRadiusDp,
+                scale = scale
             )
             listLayout.addView(wrapper)
             addedCount++

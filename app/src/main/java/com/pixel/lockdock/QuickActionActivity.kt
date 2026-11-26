@@ -157,6 +157,36 @@ class QuickActionActivity : ComponentActivity() {
                             HorizontalDivider(color = Color(0x24FFFFFF))
                             Spacer(modifier = Modifier.height(10.dp))
 
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "🎨 全部小工具統一圓角",
+                                    color = Color(0xFFCE93D8),
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = WidgetCornerStyler.describeCornerStyle(config.widgetCornerRadiusDp),
+                                    color = Color(0xFFE1BEE7),
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                            androidx.compose.material3.Slider(
+                                value = config.widgetCornerRadiusDp.toFloat(),
+                                onValueChange = { newR ->
+                                    save(config.copy(widgetCornerRadiusDp = (newR + 0.5f).toInt()))
+                                },
+                                valueRange = WidgetCornerStyler.MIN_CORNER_RADIUS_DP.toFloat()..WidgetCornerStyler.MAX_CORNER_RADIUS_DP.toFloat()
+                            )
+
+                            Spacer(modifier = Modifier.height(6.dp))
+                            HorizontalDivider(color = Color(0x24FFFFFF))
+                            Spacer(modifier = Modifier.height(10.dp))
+
                             Text(
                                 text = "📝 鎖屏置頂備忘錄／座右銘",
                                 color = Color(0xFF90CAF9),

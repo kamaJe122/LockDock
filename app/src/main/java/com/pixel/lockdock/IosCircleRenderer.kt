@@ -28,8 +28,11 @@ object IosCircleRenderer {
         val cx = SIZE / 2f
         val cy = SIZE / 2f
         val outerRadius = SIZE / 2f - 4f
+        val slotRadiusDp = WidgetCornerStyler.slot1x1RadiusDp(config)
+        val cornerPx = ((slotRadiusDp / 36f) * outerRadius).coerceIn(0f, outerRadius)
+        val tileRect = RectF(cx - outerRadius, cy - outerRadius, cx + outerRadius, cy + outerRadius)
 
-        // Frosted glass circular background
+        // Frosted glass dynamic-corner tile background
         val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.FILL
             color = if (item.type == SlotWidgetType.EMPTY_SLOT) {
@@ -38,15 +41,15 @@ object IosCircleRenderer {
                 Color.argb(92, 28, 35, 52)
             }
         }
-        canvas.drawCircle(cx, cy, outerRadius, bgPaint)
+        canvas.drawRoundRect(tileRect, cornerPx, cornerPx, bgPaint)
 
-        // Subtle glass rim
+        // Subtle glass rim following the exact dynamic corner radius
         val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.STROKE
             strokeWidth = 2.4f
             color = Color.argb(95, 255, 255, 255)
         }
-        canvas.drawCircle(cx, cy, outerRadius, borderPaint)
+        canvas.drawRoundRect(tileRect, cornerPx, cornerPx, borderPaint)
 
         when (item.type) {
             SlotWidgetType.BATTERY_RING -> {
@@ -96,7 +99,15 @@ object IosCircleRenderer {
                         style = Paint.Style.FILL
                         color = Color.argb(180, 255, 213, 79)
                     }
-                    canvas.drawCircle(cx, cy, outerRadius - 6f, glowPaint)
+                    val inset = 6f
+                    val glowRect = RectF(
+                        tileRect.left + inset,
+                        tileRect.top + inset,
+                        tileRect.right - inset,
+                        tileRect.bottom - inset
+                    )
+                    val glowCorner = (cornerPx - inset).coerceAtLeast(0f)
+                    canvas.drawRoundRect(glowRect, glowCorner, glowCorner, glowPaint)
                 }
                 drawCenterMainText(
                     canvas,
@@ -119,11 +130,12 @@ object IosCircleRenderer {
                 if (iconBmp != null) {
                     val left = cx - iconBmp.width / 2f
                     val top = cy - iconBmp.height / 2f - 10f
+                    val iconCorner = if (slotRadiusDp == 0) 0f else (cornerPx * 0.45f).coerceIn(6f, 20f)
                     val clipPath = Path().apply {
                         addRoundRect(
                             RectF(left, top, left + iconBmp.width, top + iconBmp.height),
-                            20f,
-                            20f,
+                            iconCorner,
+                            iconCorner,
                             Path.Direction.CW
                         )
                     }
