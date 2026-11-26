@@ -87,10 +87,8 @@ data class LockDockConfig(
     val blockSpacingDp: Int = 6,
     val overlayYOffsetDp: Int = 220,
     val overlayAlphaPercent: Int = 95,
-    val holdUnlockZoneToDismiss: Boolean = true,
-    val holdUnlockDurationMs: Int = 1000,
-    val unlockZoneXPermille: Int = 500,
-    val unlockZoneYPermille: Int = 742,
+    val passiveLongPressDismiss: Boolean = true,
+    val showQuickDismissPill: Boolean = false,
     val dismissOnBiometricUnlock: Boolean = false,
     val hideOnCallAndAlarm: Boolean = true,
     val hostedWidgets: List<HostedWidgetEntry> = emptyList(),
@@ -237,10 +235,8 @@ object LockDockRepository {
                 blockSpacingDp = obj.optInt("blockSpacingDp", 6).coerceIn(0, 24),
                 overlayYOffsetDp = obj.optInt("overlayYOffsetDp", 220).coerceIn(60, 620),
                 overlayAlphaPercent = obj.optInt("overlayAlphaPercent", 95).coerceIn(45, 100),
-                holdUnlockZoneToDismiss = obj.optBoolean("holdUnlockZoneToDismiss", true),
-                holdUnlockDurationMs = obj.optInt("holdUnlockDurationMs", 1000).coerceIn(400, 2500),
-                unlockZoneXPermille = obj.optInt("unlockZoneXPermille", 500).coerceIn(150, 850),
-                unlockZoneYPermille = obj.optInt("unlockZoneYPermille", 742).coerceIn(450, 930),
+                passiveLongPressDismiss = obj.optBoolean("passiveLongPressDismiss", true),
+                showQuickDismissPill = obj.optBoolean("showQuickDismissPill", false),
                 dismissOnBiometricUnlock = obj.optBoolean("dismissOnBiometricUnlock", false),
                 hideOnCallAndAlarm = obj.optBoolean("hideOnCallAndAlarm", true),
                 hostedWidgets = parsedHosted,
@@ -274,10 +270,8 @@ object LockDockRepository {
             put("blockSpacingDp", config.blockSpacingDp)
             put("overlayYOffsetDp", config.overlayYOffsetDp)
             put("overlayAlphaPercent", config.overlayAlphaPercent)
-            put("holdUnlockZoneToDismiss", config.holdUnlockZoneToDismiss)
-            put("holdUnlockDurationMs", config.holdUnlockDurationMs)
-            put("unlockZoneXPermille", config.unlockZoneXPermille)
-            put("unlockZoneYPermille", config.unlockZoneYPermille)
+            put("passiveLongPressDismiss", config.passiveLongPressDismiss)
+            put("showQuickDismissPill", config.showQuickDismissPill)
             put("dismissOnBiometricUnlock", config.dismissOnBiometricUnlock)
             put("hideOnCallAndAlarm", config.hideOnCallAndAlarm)
             put("calendarDaysAhead", config.calendarDaysAhead)

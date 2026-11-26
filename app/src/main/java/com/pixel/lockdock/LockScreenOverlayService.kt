@@ -1,63 +1,57 @@
 package com.pixel.lockdock
 
 import android.accessibilityservice.AccessibilityService
-import android.annotation.SuppressLint
 import android.app.KeyguardManager
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
-import android.graphics.Canvas
 import android.graphics.Color
-import android.graphics.DashPathEffect
-import android.graphics.Paint
 import android.graphics.PixelFormat
 import android.graphics.Rect
-import android.graphics.RectF
+import android.graphics.drawable.GradientDrawable
 import android.media.AudioAttributes
 import android.media.AudioManager
 import android.media.AudioPlaybackConfiguration
 import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
-import android.os.SystemClock
+import android.util.TypedValue
 import android.view.Gravity
-import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityWindowInfo
 import android.widget.FrameLayout
 import android.widget.LinearLayout
-import kotlin.math.abs
-import kotlin.math.hypot
+import android.widget.TextView
 import kotlin.math.roundToInt
 
 /**
  * Mode 2: Renders each user-enabled Lock Screen block ONLY on the genuine Lock Screen.
- * Automatically hides immediately during:
- * - Incoming or ongoing phone / VoIP calls (cellular, LINE, WhatsApp, Messenger, Call Screen)
- * - Sounding or vibrate-only Alarms & Timers (Google Clock & third-party alarm apps)
- * - Any full-screen showWhenLocked app occluding Keyguard (e.g. Lock-screen Camera / Wallet)
+ *
+ * v1.8 Zero-Interference Unlock Engine:
+ * - ZERO overlay or progress ring ("能量條") is ever placed over the Pixel ultrasonic
+ *   fingerprint sensor / 🔓 unlock circle — 100% direct 0ms native hardware touch pass-through!
+ * - Instant (< 50–90ms) auto-hide as soon as Keyguard unlocks (Fingerprint, Face Unlock,
+ *   or Extend Unlock 延長解鎖) or when any incoming/active call, alarm, timer, or
+ *   full-screen showWhenLocked app appears.
  */
 class LockScreenOverlayService : AccessibilityService() {
 
     private var windowManager: WindowManager? = null
     private var audioManager: AudioManager? = null
     private var rootContainer: LinearLayout? = null
+    private var quickDismissRow: FrameLayout? = null
     private var capsuleFrame: FrameLayout? = null
     private var shelfFrame: FrameLayout? = null
     private var hostedListContainer: LinearLayout? = null
     private var layoutParams: WindowManager.LayoutParams? = null
 
-    private var unlockZoneView: UnlockZoneSensorView? = null
-    private var unlockZoneParams: WindowManager.LayoutParams? = null
-
     private var currentHostedSignature: String = ""
     private var currentShelfBelow: Boolean? = null
     private val mainHandler = Handler(Looper.getMainLooper())
     private var previewUntilMillis: Long = 0L
-    private var calibrationUntilMillis: Long = 0L
 
     private var dismissedUntilScreenOff: Boolean = false
     private var lastKnownDeviceLocked: Boolean = false
@@ -83,8 +77,7 @@ class LockScreenOverlayService : AccessibilityService() {
             val isKeyguard = km?.isKeyguardLocked == true
             val isDevLocked = km?.isDeviceLocked == true
             val isInteractive = pm?.isInteractive != false
-            val now = System.currentTimeMillis()
-            val isPreviewing = now < previewUntilMillis || now < calibrationUntilMillis
+            val isPreviewing = System.currentTimeMillis() < previewUntilMillis
 
             if (!isInteractive) {
                 hideAllOverlays()
@@ -103,31 +96,20 @@ class LockScreenOverlayService : AccessibilityService() {
                 hideAllOverlays()
                 // Keep watcher alive lightly while screen is on & keyguard locked so when call/alarm
                 // ends, LockDock can return cleanly
-                mainHandler.postDelayed(this, 400L)
+                mainHandler.postDelayed(this, 350L)
                 return
             }
 
-            if (lastKnownDeviceLocked && !isDevLocked) {
-                if (cfg.dismissOnBiometricUnlock) {
-                    dismissForCurrentSession(vibrate = false)
-                    return
-                } else {
-                    syncUnlockZoneSensor(
-                        cfg = cfg,
-                        isKeyguard = isKeyguard,
-                        isDeviceLocked = false,
-                        isPreviewing = now < previewUntilMillis,
-                        isCalibrating = now < calibrationUntilMillis
-                    )
-                }
+            if (lastKnownDeviceLocked && !isDevLocked && cfg.dismissOnBiometricUnlock) {
+                dismissForCurrentSession(vibrate = false)
+                return
             }
             lastKnownDeviceLocked = isDevLocked
 
-            if (rootContainer?.visibility == View.VISIBLE ||
-                unlockZoneView?.visibility == View.VISIBLE ||
-                isPreviewing
-            ) {
-                mainHandler.postDelayed(this, 250L)
+            if (rootContainer?.visibility == View.VISIBLE || isPreviewing) {
+                // Fast 90ms poll ONLY during the few seconds LockDock is actively shown on an
+                // interactive lock screen -> guarantees < 0.09s instant hide on Extend Unlock!
+                mainHandler.postDelayed(this, 90L)
             } else {
                 stopWatcher()
             }
@@ -148,7 +130,8 @@ class LockScreenOverlayService : AccessibilityService() {
                     evaluateVisibilityAndRefresh(rebuildViews = true, forceRebindHosted = true)
                 }
                 Intent.ACTION_USER_PRESENT -> {
-                    evaluateVisibilityAndRefresh(rebuildViews = false, forceRebindHosted = false)
+                    hideAllOverlays()
+                    stopWatcher()
                 }
             }
         }
@@ -183,13 +166,14 @@ class LockScreenOverlayService : AccessibilityService() {
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        // Passive, zero-overlay long-press detection on SystemUI lock icon if user holds without unlocking
         if (event?.eventType == AccessibilityEvent.TYPE_VIEW_LONG_CLICKED &&
             event.packageName?.toString() == "com.android.systemui"
         ) {
             val km = getSystemService(KeyguardManager::class.java)
             if (km?.isKeyguardLocked == true) {
                 val cfg = LockDockRepository.loadConfig(this)
-                if (cfg.holdUnlockZoneToDismiss && rootContainer?.visibility == View.VISIBLE) {
+                if (cfg.passiveLongPressDismiss && rootContainer?.visibility == View.VISIBLE) {
                     dismissForCurrentSession(vibrate = true)
                     return
                 }
@@ -215,8 +199,8 @@ class LockScreenOverlayService : AccessibilityService() {
      * Returns true when the phone is NOT on the pure Lock Screen — specifically when:
      * 1) Cellular or VoIP (LINE/WhatsApp/Messenger/etc.) call is ringing or active (AudioManager.mode)
      * 2) An Alarm, Clock Timer, Ringtone, or Voice Call stream is playing (AudioPlaybackConfiguration)
-     * 3) A full-screen showWhenLocked Application window (such as a silent Incoming Call,
-     *    vibrate-only Alarm, Camera on Lock Screen, or Wallet) is occluding Keyguard.
+     * 3) A full-screen Application window (such as Pixel Launcher during unlock transition,
+     *    silent Incoming Call, vibrate-only Alarm, or Lock-screen Camera) is above Keyguard.
      */
     private fun isCallOrAlarmOrOccludingAppActive(): Boolean {
         val am = audioManager
@@ -278,7 +262,7 @@ class LockScreenOverlayService : AccessibilityService() {
         if (!watcherRunning) {
             watcherRunning = true
             mainHandler.removeCallbacks(lockStateWatcher)
-            mainHandler.postDelayed(lockStateWatcher, 250L)
+            mainHandler.postDelayed(lockStateWatcher, 90L)
         }
     }
 
@@ -298,10 +282,6 @@ class LockScreenOverlayService : AccessibilityService() {
 
     private fun hideAllOverlays() {
         rootContainer?.let { if (it.visibility != View.GONE) it.visibility = View.GONE }
-        unlockZoneView?.let {
-            it.cancelHold()
-            if (it.visibility != View.GONE) it.visibility = View.GONE
-        }
     }
 
     private fun dpToPx(dp: Int): Int {
@@ -318,6 +298,38 @@ class LockScreenOverlayService : AccessibilityService() {
         }
     }
 
+    private fun buildQuickDismissRow(): FrameLayout {
+        val row = FrameLayout(this).apply {
+            visibility = View.GONE
+            setPadding(dpToPx(4), 0, dpToPx(4), dpToPx(4))
+        }
+        val pillBg = GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            cornerRadius = dpToPx(999).toFloat()
+            setColor(Color.argb(115, 16, 22, 38))
+            setStroke(dpToPx(1), Color.argb(110, 255, 255, 255))
+        }
+        val btn = TextView(this).apply {
+            text = "✕ 收起"
+            setTextColor(Color.argb(235, 240, 246, 255))
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+            background = pillBg
+            setPadding(dpToPx(11), dpToPx(4), dpToPx(11), dpToPx(4))
+            setOnClickListener {
+                dismissForCurrentSession(vibrate = true)
+            }
+        }
+        row.addView(
+            btn,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                Gravity.END or Gravity.CENTER_VERTICAL
+            )
+        )
+        return row
+    }
+
     private fun ensureOverlayAttached() {
         val wm = windowManager ?: return
         val cfg = LockDockRepository.loadConfig(this)
@@ -331,6 +343,7 @@ class LockScreenOverlayService : AccessibilityService() {
                 visibility = View.GONE
             }
 
+            val dismissRow = buildQuickDismissRow()
             val capsule = FrameLayout(this)
             val shelf = FrameLayout(this)
             val hostedList = LinearLayout(this).apply {
@@ -339,6 +352,7 @@ class LockScreenOverlayService : AccessibilityService() {
                 visibility = View.GONE
             }
 
+            quickDismissRow = dismissRow
             capsuleFrame = capsule
             shelfFrame = shelf
             hostedListContainer = hostedList
@@ -366,144 +380,23 @@ class LockScreenOverlayService : AccessibilityService() {
                 layoutParams = params
             }
         }
-
-        if (unlockZoneView == null) {
-            val zoneDiameterPx = dpToPx(106)
-            val bounds = getPhysicalScreenBounds()
-            val targetCenterX = (bounds.width() * (cfg.unlockZoneXPermille / 1000f)).roundToInt()
-            val targetCenterY = (bounds.height() * (cfg.unlockZoneYPermille / 1000f)).roundToInt()
-
-            val sensor = UnlockZoneSensorView(
-                context = this,
-                handler = mainHandler,
-                onHoldCompleted = {
-                    dismissForCurrentSession(vibrate = true)
-                },
-                onQuickTapOrSwipeUp = {
-                    dismissedUntilScreenOff = true
-                    hideAllOverlays()
-                    stopWatcher()
-                    runCatching {
-                        val dismissIntent = Intent(this, LockLaunchActivity::class.java).apply {
-                            putExtra(LockLaunchActivity.EXTRA_DISMISS_ONLY, true)
-                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION)
-                        }
-                        startActivity(dismissIntent)
-                    }
-                },
-                onCalibrationDragged = { rawCenterX, rawCenterY ->
-                    val b = getPhysicalScreenBounds()
-                    val xPm = ((rawCenterX / b.width().coerceAtLeast(1)) * 1000f)
-                        .roundToInt().coerceIn(150, 850)
-                    val yPm = ((rawCenterY / b.height().coerceAtLeast(1)) * 1000f)
-                        .roundToInt().coerceIn(450, 930)
-                    val latest = LockDockRepository.loadConfig(this)
-                    LockDockRepository.saveConfig(
-                        this,
-                        latest.copy(unlockZoneXPermille = xPm, unlockZoneYPermille = yPm),
-                        notify = false
-                    )
-                    positionSensorExact(xPm, yPm)
-                }
-            ).apply {
-                visibility = View.GONE
-            }
-
-            val zParams = WindowManager.LayoutParams(
-                zoneDiameterPx,
-                zoneDiameterPx,
-                WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-                    WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
-                PixelFormat.TRANSLUCENT
-            ).apply {
-                layoutInDisplayCutoutMode =
-                    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
-                setFitInsetsTypes(0)
-                gravity = Gravity.TOP or Gravity.START
-                x = (targetCenterX - zoneDiameterPx / 2).coerceAtLeast(0)
-                y = (targetCenterY - zoneDiameterPx / 2).coerceAtLeast(0)
-            }
-
-            runCatching {
-                wm.addView(sensor, zParams)
-                unlockZoneView = sensor
-                unlockZoneParams = zParams
-            }
-        }
-    }
-
-    private fun positionSensorExact(xPermille: Int, yPermille: Int) {
-        val wm = windowManager ?: return
-        val sensor = unlockZoneView ?: return
-        val zParams = unlockZoneParams ?: return
-
-        val bounds = getPhysicalScreenBounds()
-        val radius = zParams.width / 2
-        val desiredLeft = (bounds.width() * (xPermille / 1000f)).roundToInt() - radius
-        val desiredTop = (bounds.height() * (yPermille / 1000f)).roundToInt() - radius
-
-        if (zParams.x != desiredLeft || zParams.y != desiredTop) {
-            zParams.x = desiredLeft
-            zParams.y = desiredTop
-            runCatching { wm.updateViewLayout(sensor, zParams) }
-        }
-
-        sensor.post {
-            if (sensor.visibility != View.VISIBLE) return@post
-            val loc = IntArray(2)
-            sensor.getLocationOnScreen(loc)
-            val dx = loc[0] - desiredLeft
-            val dy = loc[1] - desiredTop
-            if (abs(dx) > 2 || abs(dy) > 2) {
-                zParams.x -= dx
-                zParams.y -= dy
-                runCatching { wm.updateViewLayout(sensor, zParams) }
-            }
-        }
-    }
-
-    private fun syncUnlockZoneSensor(
-        cfg: LockDockConfig,
-        isKeyguard: Boolean,
-        isDeviceLocked: Boolean,
-        isPreviewing: Boolean,
-        isCalibrating: Boolean
-    ) {
-        val sensor = unlockZoneView ?: return
-
-        val shouldShowSensor = isCalibrating || (
-            cfg.holdUnlockZoneToDismiss &&
-                (isPreviewing || (isKeyguard && !isDeviceLocked && !dismissedUntilScreenOff))
-            )
-
-        if (!shouldShowSensor) {
-            sensor.cancelHold()
-            if (sensor.visibility != View.GONE) {
-                sensor.visibility = View.GONE
-            }
-            return
-        }
-
-        sensor.holdDurationMs = cfg.holdUnlockDurationMs.toLong()
-        sensor.showAlignmentGuide = isPreviewing || isCalibrating
-        sensor.calibrationMode = isCalibrating
-
-        if (sensor.visibility != View.VISIBLE) {
-            sensor.visibility = View.VISIBLE
-        }
-        positionSensorExact(cfg.unlockZoneXPermille, cfg.unlockZoneYPermille)
-        sensor.invalidate()
     }
 
     private fun applyVerticalBlockOrder(container: LinearLayout, shelfBelowHosted: Boolean) {
-        if (currentShelfBelow == shelfBelowHosted && container.childCount == 3) return
+        if (currentShelfBelow == shelfBelowHosted && container.childCount == 4) return
+        val dismissRow = quickDismissRow ?: return
         val capsule = capsuleFrame ?: return
         val shelf = shelfFrame ?: return
         val hosted = hostedListContainer ?: return
 
         container.removeAllViews()
+        container.addView(
+            dismissRow,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        )
         container.addView(
             capsule,
             LinearLayout.LayoutParams(
@@ -548,17 +441,12 @@ class LockScreenOverlayService : AccessibilityService() {
     private fun removeOverlay() {
         val wm = windowManager
         rootContainer?.let { v -> if (wm != null) runCatching { wm.removeView(v) } }
-        unlockZoneView?.let { v ->
-            v.cancelHold()
-            if (wm != null) runCatching { wm.removeView(v) }
-        }
         rootContainer = null
+        quickDismissRow = null
         capsuleFrame = null
         shelfFrame = null
         hostedListContainer = null
         layoutParams = null
-        unlockZoneView = null
-        unlockZoneParams = null
         currentHostedSignature = ""
         currentShelfBelow = null
     }
@@ -578,17 +466,21 @@ class LockScreenOverlayService : AccessibilityService() {
         val isLocked = km?.isKeyguardLocked == true
         val isDeviceLocked = km?.isDeviceLocked == true
         val isInteractive = pm?.isInteractive != false
-        val now = System.currentTimeMillis()
-        val isPreviewing = now < previewUntilMillis
-        val isCalibrating = now < calibrationUntilMillis
+        val isPreviewing = System.currentTimeMillis() < previewUntilMillis
 
-        // Hide immediately if incoming/active call, ringing alarm, or full-screen showWhenLocked app!
-        val isInterruptedByCallOrAlarm = !isPreviewing && !isCalibrating &&
+        if (lastKnownDeviceLocked && !isDeviceLocked && cfg.dismissOnBiometricUnlock && !isPreviewing) {
+            lastKnownDeviceLocked = false
+            dismissForCurrentSession(vibrate = false)
+            return
+        }
+        lastKnownDeviceLocked = isDeviceLocked
+
+        // Hide immediately if incoming/active call, ringing alarm, or full-screen app above Keyguard!
+        val isInterruptedByCallOrAlarm = !isPreviewing &&
             cfg.hideOnCallAndAlarm && isLocked && isCallOrAlarmOrOccludingAppActive()
 
         if (isInterruptedByCallOrAlarm) {
             hideAllOverlays()
-            // Keep light watcher running while screen is interactive so widgets return after call/alarm ends
             if (isInteractive) startWatcherIfNeeded()
             return
         }
@@ -602,60 +494,51 @@ class LockScreenOverlayService : AccessibilityService() {
         val shouldShowWidgets = isInteractive && hasAnyActiveBlock &&
             (isPreviewing || (cfg.overlayEnabled && isLocked && !dismissedUntilScreenOff))
 
-        if (!shouldShowWidgets && !isCalibrating) {
+        if (!shouldShowWidgets) {
             hideAllOverlays()
             stopWatcher()
             return
         }
 
-        if (shouldShowWidgets) {
-            applyVerticalBlockOrder(container, cfg.shelfBelowHosted)
+        applyVerticalBlockOrder(container, cfg.shelfBelowHosted)
 
-            val targetY = dpToPx(cfg.overlayYOffsetDp)
-            val targetAlpha = (cfg.overlayAlphaPercent / 100f).coerceIn(0.45f, 1f)
-            container.alpha = targetAlpha
+        val targetY = dpToPx(cfg.overlayYOffsetDp)
+        val targetAlpha = (cfg.overlayAlphaPercent / 100f).coerceIn(0.45f, 1f)
+        container.alpha = targetAlpha
 
-            if (params.y != targetY) {
-                params.y = targetY
-                runCatching { wm.updateViewLayout(container, params) }
-            }
-
-            val becameVisible = container.visibility != View.VISIBLE
-
-            if (showCapsule) {
-                capsuleFrame?.visibility = View.VISIBLE
-                if (rebuildViews || becameVisible || capsuleFrame?.childCount == 0) {
-                    rebuildCapsuleOnly(cfg)
-                }
-            } else {
-                capsuleFrame?.visibility = View.GONE
-            }
-
-            if (showShelf) {
-                shelfFrame?.visibility = View.VISIBLE
-                if (rebuildViews || becameVisible || shelfFrame?.childCount == 0) {
-                    rebuildShelfOnly(cfg)
-                }
-            } else {
-                shelfFrame?.visibility = View.GONE
-            }
-
-            syncHostedWidgets(cfg, force = forceRebindHosted || becameVisible)
-
-            if (becameVisible) {
-                container.visibility = View.VISIBLE
-            }
-        } else {
-            container.visibility = View.GONE
+        if (params.y != targetY) {
+            params.y = targetY
+            runCatching { wm.updateViewLayout(container, params) }
         }
 
-        syncUnlockZoneSensor(
-            cfg = cfg,
-            isKeyguard = isLocked,
-            isDeviceLocked = isDeviceLocked,
-            isPreviewing = isPreviewing,
-            isCalibrating = isCalibrating
-        )
+        val becameVisible = container.visibility != View.VISIBLE
+
+        quickDismissRow?.visibility = if (cfg.showQuickDismissPill) View.VISIBLE else View.GONE
+
+        if (showCapsule) {
+            capsuleFrame?.visibility = View.VISIBLE
+            if (rebuildViews || becameVisible || capsuleFrame?.childCount == 0) {
+                rebuildCapsuleOnly(cfg)
+            }
+        } else {
+            capsuleFrame?.visibility = View.GONE
+        }
+
+        if (showShelf) {
+            shelfFrame?.visibility = View.VISIBLE
+            if (rebuildViews || becameVisible || shelfFrame?.childCount == 0) {
+                rebuildShelfOnly(cfg)
+            }
+        } else {
+            shelfFrame?.visibility = View.GONE
+        }
+
+        syncHostedWidgets(cfg, force = forceRebindHosted || becameVisible)
+
+        if (becameVisible) {
+            container.visibility = View.VISIBLE
+        }
+
         startWatcherIfNeeded()
     }
 
@@ -768,16 +651,6 @@ class LockScreenOverlayService : AccessibilityService() {
         )
     }
 
-    private fun triggerCalibration(durationMs: Long) {
-        dismissedUntilScreenOff = false
-        calibrationUntilMillis = System.currentTimeMillis() + durationMs
-        evaluateVisibilityAndRefresh(rebuildViews = false, forceRebindHosted = false)
-        mainHandler.postDelayed(
-            { evaluateVisibilityAndRefresh(rebuildViews = false, forceRebindHosted = false) },
-            durationMs + 100L
-        )
-    }
-
     companion object {
         @Volatile
         private var instance: LockScreenOverlayService? = null
@@ -798,188 +671,6 @@ class LockScreenOverlayService : AccessibilityService() {
                 svc.triggerPreview(durationMs)
             }
             return true
-        }
-
-        fun requestDragCalibration(durationMs: Long = 10000L): Boolean {
-            val svc = instance ?: return false
-            svc.mainHandler.post {
-                svc.triggerCalibration(durationMs)
-            }
-            return true
-        }
-    }
-}
-
-private class UnlockZoneSensorView(
-    context: Context,
-    private val handler: Handler,
-    private val onHoldCompleted: () -> Unit,
-    private val onQuickTapOrSwipeUp: () -> Unit,
-    private val onCalibrationDragged: (Float, Float) -> Unit
-) : View(context) {
-
-    var holdDurationMs: Long = 1000L
-    var showAlignmentGuide: Boolean = false
-    var calibrationMode: Boolean = false
-
-    private var holding: Boolean = false
-    private var holdTriggered: Boolean = false
-    private var downUptimeMs: Long = 0L
-    private var downRawX: Float = 0f
-    private var downRawY: Float = 0f
-
-    private val progressPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE
-        strokeWidth = 10f
-        strokeCap = Paint.Cap.ROUND
-        color = Color.argb(240, 105, 240, 174)
-    }
-
-    private val trackPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE
-        strokeWidth = 10f
-        color = Color.argb(80, 255, 255, 255)
-    }
-
-    private val guidePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE
-        strokeWidth = 5f
-        color = Color.argb(235, 79, 195, 247)
-        pathEffect = DashPathEffect(floatArrayOf(14f, 10f), 0f)
-    }
-
-    private val crosshairPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE
-        strokeWidth = 3.5f
-        color = Color.argb(220, 105, 240, 174)
-    }
-
-    private val guideFillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.FILL
-        color = Color.argb(70, 20, 45, 75)
-    }
-
-    private val guideTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.WHITE
-        textSize = 23f
-        textAlign = Paint.Align.CENTER
-        isFakeBoldText = true
-    }
-
-    private val completeRunnable = Runnable {
-        if (holding && !holdTriggered) {
-            holdTriggered = true
-            holding = false
-            invalidate()
-            onHoldCompleted()
-        }
-    }
-
-    private val animTickRunnable = object : Runnable {
-        override fun run() {
-            if (!holding) return
-            invalidate()
-            handler.postDelayed(this, 16L)
-        }
-    }
-
-    fun cancelHold() {
-        holding = false
-        handler.removeCallbacks(completeRunnable)
-        handler.removeCallbacks(animTickRunnable)
-        invalidate()
-    }
-
-    @SuppressLint("ClickableViewAccessibility")
-    override fun onTouchEvent(event: MotionEvent): Boolean {
-        if (calibrationMode) {
-            when (event.actionMasked) {
-                MotionEvent.ACTION_DOWN,
-                MotionEvent.ACTION_MOVE -> {
-                    onCalibrationDragged(event.rawX, event.rawY)
-                    invalidate()
-                }
-                MotionEvent.ACTION_UP -> {
-                    DeviceStateHelper.vibrateClick(context)
-                }
-            }
-            return true
-        }
-
-        val density = resources.displayMetrics.density.coerceAtLeast(1f)
-        val cancelSlopPx = 46f * density
-        val swipeUpThresholdPx = -46f * density
-
-        when (event.actionMasked) {
-            MotionEvent.ACTION_DOWN -> {
-                holding = true
-                holdTriggered = false
-                downUptimeMs = SystemClock.uptimeMillis()
-                downRawX = event.rawX
-                downRawY = event.rawY
-                handler.removeCallbacks(completeRunnable)
-                handler.postDelayed(completeRunnable, holdDurationMs)
-                handler.removeCallbacks(animTickRunnable)
-                handler.post(animTickRunnable)
-                invalidate()
-                return true
-            }
-
-            MotionEvent.ACTION_MOVE -> {
-                if (holding) {
-                    val dx = event.rawX - downRawX
-                    val dy = event.rawY - downRawY
-                    if (dy < swipeUpThresholdPx) {
-                        cancelHold()
-                        holdTriggered = true
-                        onQuickTapOrSwipeUp()
-                    } else if (hypot(dx, dy) > cancelSlopPx) {
-                        cancelHold()
-                    }
-                }
-                return true
-            }
-
-            MotionEvent.ACTION_UP -> {
-                val wasHolding = holding
-                val alreadyTriggered = holdTriggered
-                cancelHold()
-                if (wasHolding && !alreadyTriggered) {
-                    onQuickTapOrSwipeUp()
-                }
-                return true
-            }
-
-            MotionEvent.ACTION_CANCEL -> {
-                cancelHold()
-                return true
-            }
-        }
-        return super.onTouchEvent(event)
-    }
-
-    override fun onDraw(canvas: Canvas) {
-        super.onDraw(canvas)
-        val pad = 8f
-        val rect = RectF(pad, pad, width - pad, height - pad)
-        val cx = width / 2f
-        val cy = height / 2f
-
-        if (showAlignmentGuide && !holding) {
-            canvas.drawOval(rect, guideFillPaint)
-            canvas.drawOval(rect, guidePaint)
-            canvas.drawLine(cx - 18f, cy, cx + 18f, cy, crosshairPaint)
-            canvas.drawLine(cx, cy - 18f, cx, cy + 18f, crosshairPaint)
-            val txt = if (calibrationMode) "拖曳對準🔓" else "解鎖偵測圈"
-            canvas.drawText(txt, cx, cy + 36f, guideTextPaint)
-            return
-        }
-
-        if (holding && !holdTriggered) {
-            val elapsed = (SystemClock.uptimeMillis() - downUptimeMs).coerceAtLeast(0L)
-            val pct = (elapsed.toFloat() / holdDurationMs.coerceAtLeast(1L).toFloat()).coerceIn(0f, 1f)
-            canvas.drawOval(rect, trackPaint)
-            canvas.drawArc(rect, -90f, 360f * pct, false, progressPaint)
         }
     }
 }

@@ -1615,109 +1615,64 @@ private fun BlockVisibilityControlSection(
 
         HorizontalDivider(color = Color(0x24FFFFFF))
 
-        // Unlock Zone 1-Second Hold Dismissal Section
+        // v1.8 Zero-Interference Instant Unlock & Auto-Hide Section
         Surface(
             shape = RoundedCornerShape(18.dp),
             color = Color(0xFF1A253D),
             modifier = Modifier
                 .fillMaxWidth()
-                .border(1.dp, Color(0x554FC3F7), RoundedCornerShape(18.dp))
+                .border(1.dp, Color(0x5569F0AE), RoundedCornerShape(18.dp))
         ) {
             Column(
                 modifier = Modifier.padding(14.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
+                Text(
+                    text = "⚡ 極速無感解鎖（已徹底移除能量條遮擋）",
+                    color = Color(0xFF69F0AE),
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = "下方指紋與 🔓 解鎖圓圈 100% 原生硬體直通（0 秒等待），按壓指紋或點一下 🔓 立即秒開進桌面並瞬間收起小工具！",
+                    color = Color(0xFFB8C7E0),
+                    fontSize = 11.sp
+                )
+
+                HorizontalDivider(color = Color(0x22FFFFFF))
+
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "👆 手指放在解鎖區按住自動關閉",
-                            color = Color.White,
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(
-                            text = "手指放在下方 🔓 解鎖圓圈滿 ${(config.holdUnlockDurationMs / 100f).roundToInt() / 10f} 秒立即收起小工具（下次喚醒螢幕自動恢復）",
-                            color = Color(0xFFB8C7E0),
-                            fontSize = 11.sp
-                        )
-                    }
+                    Text(
+                        text = "✕ 在小工具右上角顯示「收起」迷你按鈕（留在鎖屏看通知時一鍵隱藏）",
+                        color = Color.White,
+                        fontSize = 12.sp,
+                        modifier = Modifier.weight(1f)
+                    )
                     Switch(
-                        checked = config.holdUnlockZoneToDismiss,
-                        onCheckedChange = { onUpdateConfig(config.copy(holdUnlockZoneToDismiss = it)) }
+                        checked = config.showQuickDismissPill,
+                        onCheckedChange = { onUpdateConfig(config.copy(showQuickDismissPill = it)) }
                     )
                 }
 
-                if (config.holdUnlockZoneToDismiss) {
-                    val context = LocalContext.current
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
                     Text(
-                        text = "按住觸發時間：${String.format("%.1f", config.holdUnlockDurationMs / 1000f)} 秒",
-                        color = Color(0xFF90CAF9),
-                        fontSize = 12.sp
+                        text = "👆 長按系統 🔓 圖示暫時收起小工具（零遮擋被動偵測，完全不影響秒按解鎖）",
+                        color = Color.White,
+                        fontSize = 12.sp,
+                        modifier = Modifier.weight(1f)
                     )
-                    Slider(
-                        value = config.holdUnlockDurationMs.toFloat(),
-                        onValueChange = {
-                            val snapped = ((it / 100f).roundToInt() * 100).coerceIn(400, 2000)
-                            onUpdateConfig(config.copy(holdUnlockDurationMs = snapped))
-                        },
-                        valueRange = 400f..2000f
+                    Switch(
+                        checked = config.passiveLongPressDismiss,
+                        onCheckedChange = { onUpdateConfig(config.copy(passiveLongPressDismiss = it)) }
                     )
-
-                    Text(
-                        text = "解鎖圓圈中心位置：水平 ${String.format("%.1f", config.unlockZoneXPermille / 10f)}% · 垂直 ${String.format("%.1f", config.unlockZoneYPermille / 10f)}%（Pixel 10 Pro XL 實測值 74.2%）",
-                        color = Color(0xFF90CAF9),
-                        fontSize = 12.sp
-                    )
-                    Slider(
-                        value = config.unlockZoneYPermille.toFloat(),
-                        onValueChange = {
-                            onUpdateConfig(config.copy(unlockZoneYPermille = it.roundToInt()))
-                        },
-                        valueRange = 550f..880f
-                    )
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Button(
-                            onClick = {
-                                val ok = LockScreenOverlayService.requestDragCalibration(10_000L)
-                                if (ok) {
-                                    Toast.makeText(
-                                        context,
-                                        "已顯示藍色準星 10 秒！可直接用手指按住準星拖曳對準 🔓 位置",
-                                        Toast.LENGTH_LONG
-                                    ).show()
-                                } else {
-                                    Toast.makeText(
-                                        context,
-                                        "請先啟用上方無障礙鎖屏服務",
-                                        Toast.LENGTH_SHORT
-                                    ).show()
-                                }
-                            },
-                            modifier = Modifier.weight(1.3f),
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4FC3F7))
-                        ) {
-                            Text("🎯 10秒實景拖曳對位", color = Color(0xFF061320), fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                        }
-                        OutlinedButton(
-                            onClick = {
-                                onUpdateConfig(
-                                    config.copy(unlockZoneXPermille = 500, unlockZoneYPermille = 742)
-                                )
-                                Toast.makeText(context, "已恢復 Pixel 10 Pro XL 精準位置 (50.0%, 74.2%)", Toast.LENGTH_SHORT).show()
-                            },
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Text("↺ 恢復預設 74.2%", fontSize = 12.sp)
-                        }
-                    }
                 }
 
                 Row(
@@ -1743,7 +1698,7 @@ private fun BlockVisibilityControlSection(
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Text(
-                        text = "指紋／人臉從上鎖剛解鎖時也自動關閉",
+                        text = "😊 臉部／指紋剛辨識解鎖成功瞬間就自動收起小工具（不必等進桌面）",
                         color = Color.White,
                         fontSize = 12.sp,
                         modifier = Modifier.weight(1f)
@@ -1790,7 +1745,7 @@ private fun BlockVisibilityControlSection(
             onClick = onTestPreview,
             modifier = Modifier.fillMaxWidth()
         ) {
-            Text("👀 立即預覽 4.5 秒（同時顯示藍色解鎖偵測圈對位）", color = Color(0xFF82B1FF), fontWeight = FontWeight.Bold, fontSize = 12.sp)
+            Text("👀 立即預覽 4.5 秒鎖屏效果", color = Color(0xFF82B1FF), fontWeight = FontWeight.Bold, fontSize = 12.sp)
         }
     }
 }

@@ -5,5 +5,5 @@
     android:accessibilityFlags="flagDefault|flagRetrieveInteractiveWindows"
     android:canRetrieveWindowContent="false"
     android:description="@string/accessibility_service_description"
-    android:notificationTimeout="80"
+    android:notificationTimeout="25"
     android:settingsActivity="com.pixel.lockdock.MainActivity" />
