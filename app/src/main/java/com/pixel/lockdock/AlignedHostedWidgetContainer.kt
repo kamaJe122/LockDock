@@ -8,7 +8,6 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Rect
 import android.view.View
-import android.view.ViewGroup
 import android.widget.FrameLayout
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -16,30 +15,31 @@ import kotlin.math.roundToInt
 /**
  * Wraps any hosted 3rd-party AppWidgetHostView so that:
  * 1) Its outer container width strictly equals LockDock's unified widget width.
- * 2) Built-in transparent padding / XML margins / .9.png shadow insets inside 3rd-party
- *    widgets (such as KM 桌面行事曆 vs 發票存摺) are automatically detected and trimmed so
- *    every widget's visible left & right card edges align down to the pixel.
- * 3) Unified corner-radius clipping applies cleanly right on the flush card boundary.
+ * 2) Detected visual card insets are cached per appWidgetId so displays and screen wakes
+ *    apply exact alignment on frame 0 with zero 140ms secondary scale jump.
+ * 3) Widget size options are reported only via LockDockWidgetHostManager's deduplicated
+ *    canonical dp dimensions so 3rd-party widgets never reload unnecessarily.
  */
 class AlignedHostedWidgetContainer(context: Context) : FrameLayout(context) {
 
     private var hostView: AppWidgetHostView? = null
     private var appWidgetId: Int = -1
+    private var entryHeightDp: Int = 195
+    private var entryScalePercent: Int = 100
+    private var globalWidthPercent: Int = WidgetCornerStyler.DEFAULT_WIDTH_PERCENT
     private var contentScale: Float = 1f
     private var cornerRadiusDp: Int = WidgetCornerStyler.DEFAULT_CORNER_RADIUS_DP
     private var autoAlignEdges: Boolean = true
     private var extraTrimDp: Int = 0
 
-    private var insetsDirty: Boolean = true
+    private var hasResolvedInsets: Boolean = false
     private var cachedInsets: Rect = Rect()
-    private var cachedVirtW: Int = 0
-    private var cachedVirtH: Int = 0
-    private var lastReportedWidthDp: Int = -1
-    private var lastReportedHeightDp: Int = -1
 
-    private val delayedRecheckRunnable = Runnable {
-        insetsDirty = true
-        refreshAlignmentInPlace()
+    private val initialFallbackProbeRunnable = Runnable {
+        if (!hasResolvedInsets) {
+            tryResolveAndCacheInsets()
+            refreshTransformOnly()
+        }
     }
 
     init {
@@ -50,15 +50,26 @@ class AlignedHostedWidgetContainer(context: Context) : FrameLayout(context) {
     fun bindHostView(
         view: AppWidgetHostView?,
         widgetId: Int,
+        heightDp: Int,
         scalePercent: Int,
+        widthPercent: Int,
         radiusDp: Int,
         autoAlign: Boolean,
         trimDp: Int
     ) {
-        removeCallbacks(delayedRecheckRunnable)
-        removeAllViews()
-        hostView = view
+        removeCallbacks(initialFallbackProbeRunnable)
+        if (hostView !== view) {
+            removeAllViews()
+            hostView = view
+            if (view != null) {
+                (view.parent as? FrameLayout)?.removeView(view)
+                addView(view, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+            }
+        }
         appWidgetId = widgetId
+        entryHeightDp = heightDp
+        entryScalePercent = scalePercent
+        globalWidthPercent = widthPercent
         contentScale = (scalePercent / 100f).coerceIn(0.75f, 1f)
         cornerRadiusDp = radiusDp.coerceIn(
             WidgetCornerStyler.MIN_CORNER_RADIUS_DP,
@@ -66,27 +77,35 @@ class AlignedHostedWidgetContainer(context: Context) : FrameLayout(context) {
         )
         autoAlignEdges = autoAlign
         extraTrimDp = trimDp.coerceIn(-12, 24)
-        insetsDirty = true
-        cachedInsets.setEmpty()
-        lastReportedWidthDp = -1
-        lastReportedHeightDp = -1
 
-        if (view != null) {
-            addView(view, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+        val preCached = LockDockWidgetHostManager.getCachedInsets(context, widgetId)
+        hasResolvedInsets = preCached != null
+        if (preCached == null) {
+            cachedInsets.setEmpty()
+            postDelayed(initialFallbackProbeRunnable, 140L)
         }
+
         applyOuterCornerOutline()
         requestLayout()
-        postDelayed(delayedRecheckRunnable, 140L)
     }
 
     fun updateAlignmentConfig(
+        heightDp: Int,
         scalePercent: Int,
+        widthPercent: Int,
         radiusDp: Int,
         autoAlign: Boolean,
         trimDp: Int
     ) {
         val nextScale = (scalePercent / 100f).coerceIn(0.75f, 1f)
         val scaleChanged = abs(nextScale - contentScale) > 0.005f
+        val sizeInputsChanged = entryHeightDp != heightDp ||
+            entryScalePercent != scalePercent ||
+            globalWidthPercent != widthPercent
+
+        entryHeightDp = heightDp
+        entryScalePercent = scalePercent
+        globalWidthPercent = widthPercent
         contentScale = nextScale
         cornerRadiusDp = radiusDp.coerceIn(
             WidgetCornerStyler.MIN_CORNER_RADIUS_DP,
@@ -95,30 +114,34 @@ class AlignedHostedWidgetContainer(context: Context) : FrameLayout(context) {
         autoAlignEdges = autoAlign
         extraTrimDp = trimDp.coerceIn(-12, 24)
 
+        if (sizeInputsChanged) {
+            maybeReportCanonicalSizeOptions()
+        }
+
         applyOuterCornerOutline()
         if (scaleChanged) {
-            insetsDirty = true
             requestLayout()
         } else {
-            refreshAlignmentInPlace()
+            refreshTransformOnly()
         }
     }
 
     fun onHostWidgetUpdated() {
-        insetsDirty = true
-        post {
-            refreshAlignmentInPlace()
+        if (hasResolvedInsets) {
+            // Insets already cached for this appWidgetId -> zero re-scan, zero delayed jump!
+            post { applyOuterCornerOutline() }
+            return
         }
-        removeCallbacks(delayedRecheckRunnable)
-        postDelayed(delayedRecheckRunnable, 120L)
+        post {
+            tryResolveAndCacheInsets()
+            refreshTransformOnly()
+        }
     }
 
     private fun applyOuterCornerOutline() {
         val outerPx = WidgetCornerStyler.dpToPxFloat(context, cornerRadiusDp.toFloat())
         WidgetCornerStyler.applyRoundRectOutline(this, outerPx)
 
-        // When 0° sharp corners are selected, also disable any built-in outline clipping
-        // on the 3rd-party widget's internal @android:id/background view if present.
         val child = hostView ?: return
         if (cornerRadiusDp == 0 && child.childCount > 0) {
             val rootChild = child.getChildAt(0)
@@ -131,7 +154,7 @@ class AlignedHostedWidgetContainer(context: Context) : FrameLayout(context) {
         }
     }
 
-    private fun refreshAlignmentInPlace() {
+    private fun refreshTransformOnly() {
         val child = hostView ?: return
         val w = width
         val h = height
@@ -139,8 +162,9 @@ class AlignedHostedWidgetContainer(context: Context) : FrameLayout(context) {
         val virtH = child.height
         if (w <= 0 || h <= 0 || virtW <= 0 || virtH <= 0) return
 
-        if (insetsDirty || cachedVirtW != virtW || cachedVirtH != virtH) {
-            recomputeInsets(child, virtW, virtH)
+        LockDockWidgetHostManager.getCachedInsets(context, appWidgetId)?.let { norm ->
+            cachedInsets.set(norm.toPixelRect(virtW, virtH))
+            hasResolvedInsets = true
         }
         applyOuterCornerOutline()
         applyChildTransform(child, w, h, virtW, virtH)
@@ -148,7 +172,7 @@ class AlignedHostedWidgetContainer(context: Context) : FrameLayout(context) {
     }
 
     override fun onDetachedFromWindow() {
-        removeCallbacks(delayedRecheckRunnable)
+        removeCallbacks(initialFallbackProbeRunnable)
         super.onDetachedFromWindow()
     }
 
@@ -174,39 +198,51 @@ class AlignedHostedWidgetContainer(context: Context) : FrameLayout(context) {
         val virtH = child.measuredHeight.coerceAtLeast(1)
         child.layout(0, 0, virtW, virtH)
 
-        maybeReportWidgetSizeOptions(child, virtW, virtH)
+        maybeReportCanonicalSizeOptions()
 
-        if (changed || insetsDirty || cachedVirtW != virtW || cachedVirtH != virtH) {
-            recomputeInsets(child, virtW, virtH)
+        val existing = LockDockWidgetHostManager.getCachedInsets(context, appWidgetId)
+        if (existing != null) {
+            cachedInsets.set(existing.toPixelRect(virtW, virtH))
+            hasResolvedInsets = true
+            removeCallbacks(initialFallbackProbeRunnable)
+        } else {
+            tryResolveAndCacheInsets()
         }
+
         applyOuterCornerOutline()
         applyChildTransform(child, w, h, virtW, virtH)
     }
 
-    private fun maybeReportWidgetSizeOptions(child: AppWidgetHostView, virtW: Int, virtH: Int) {
+    private fun maybeReportCanonicalSizeOptions() {
+        val child = hostView ?: return
         if (appWidgetId < 0) return
-        val density = resources.displayMetrics.density.coerceAtLeast(1f)
-        // Report >= 390dp virtual width so 5x1 / 5x2 widgets (e.g. KM Calendar) render full columns
-        val virtWDp = (virtW / density).roundToInt().coerceAtLeast(390)
-        val virtHDp = (virtH / density).roundToInt().coerceAtLeast(60)
-        if (abs(virtWDp - lastReportedWidthDp) >= 4 || abs(virtHDp - lastReportedHeightDp) >= 4) {
-            lastReportedWidthDp = virtWDp
-            lastReportedHeightDp = virtHDp
-            val mgr = AppWidgetManager.getInstance(context.applicationContext)
-            LockDockWidgetHostManager.applyWidgetSizeOptions(mgr, child, appWidgetId, virtWDp, virtHDp)
-        }
+        val (canonicalW, canonicalH) = LockDockWidgetHostManager.computeCanonicalWidgetSizeDp(
+            context = context,
+            heightDp = entryHeightDp,
+            scalePercent = entryScalePercent,
+            widthPercent = globalWidthPercent
+        )
+        val mgr = AppWidgetManager.getInstance(context.applicationContext)
+        LockDockWidgetHostManager.applyWidgetSizeOptions(
+            mgr = mgr,
+            view = child,
+            appWidgetId = appWidgetId,
+            widthDp = canonicalW,
+            heightDp = canonicalH
+        )
     }
 
-    private fun recomputeInsets(child: AppWidgetHostView, virtW: Int, virtH: Int) {
-        cachedVirtW = virtW
-        cachedVirtH = virtH
-        if (child.childCount == 0) {
-            cachedInsets.setEmpty()
-            return
-        }
-        val detected = detectVisualCardInsets(child, virtW, virtH)
-        cachedInsets.set(detected)
-        insetsDirty = false
+    private fun tryResolveAndCacheInsets() {
+        val child = hostView ?: return
+        val virtW = child.width
+        val virtH = child.height
+        if (virtW <= 0 || virtH <= 0 || child.childCount == 0) return
+
+        val detected = detectVisualCardInsetsNormalized(child, virtW, virtH) ?: return
+        LockDockWidgetHostManager.saveCachedInsets(context, appWidgetId, detected)
+        cachedInsets.set(detected.toPixelRect(virtW, virtH))
+        hasResolvedInsets = true
+        removeCallbacks(initialFallbackProbeRunnable)
     }
 
     private fun applyChildTransform(
@@ -250,16 +286,15 @@ class AlignedHostedWidgetContainer(context: Context) : FrameLayout(context) {
         private const val SAMPLE_H = 180
 
         /**
-         * Renders the laid-out AppWidgetHostView into a lightweight 360x180 probe bitmap and
-         * scans the straight mid-bands (avoiding rounded corners and bottom-right FABs like
-         * KM Calendar's '+' button) to detect any transparent padding or .9.png shadow margin.
+         * Returns null if the widget has not drawn any visible pixels yet (maxAlpha < 40),
+         * or NormalizedWidgetInsets once actual widget content is rendered.
          */
-        private fun detectVisualCardInsets(
+        private fun detectVisualCardInsetsNormalized(
             hostView: AppWidgetHostView,
             virtW: Int,
             virtH: Int
-        ): Rect {
-            if (virtW <= 0 || virtH <= 0) return Rect()
+        ): NormalizedWidgetInsets? {
+            if (virtW <= 0 || virtH <= 0) return null
             return runCatching {
                 val bmp = Bitmap.createBitmap(SAMPLE_W, SAMPLE_H, Bitmap.Config.ARGB_8888)
                 try {
@@ -279,19 +314,15 @@ class AlignedHostedWidgetContainer(context: Context) : FrameLayout(context) {
                         if (a > maxAlpha) maxAlpha = a
                     }
                     if (maxAlpha < 40) {
-                        return Rect()
+                        return null
                     }
 
-                    // Skip .9.png soft drop-shadows (< 115 alpha) when card itself is opaque;
-                    // support translucent frosted cards when maxAlpha is lower.
                     val threshold = if (maxAlpha >= 180) {
                         115
                     } else {
                         (maxAlpha * 0.55f).roundToInt().coerceAtLeast(32)
                     }
 
-                    // Scan Y band [25%..62%] for left & right straight card edges
-                    // (clears top/bottom rounded corners AND bottom-right FABs!)
                     val yStart = (SAMPLE_H * 0.25f).roundToInt()
                     val yEnd = (SAMPLE_H * 0.62f).roundToInt()
                     val minVerticalHits = ((yEnd - yStart) * 0.30f).roundToInt().coerceAtLeast(6)
@@ -327,7 +358,6 @@ class AlignedHostedWidgetContainer(context: Context) : FrameLayout(context) {
                         }
                     }
 
-                    // Scan X band [22%..70%] for top & bottom straight card edges
                     val xStart = (SAMPLE_W * 0.22f).roundToInt()
                     val xEnd = (SAMPLE_W * 0.70f).roundToInt()
                     val minHorizontalHits = ((xEnd - xStart) * 0.30f).roundToInt().coerceAtLeast(12)
@@ -365,26 +395,24 @@ class AlignedHostedWidgetContainer(context: Context) : FrameLayout(context) {
                         }
                     }
 
-                    // Only trim axes where an authentic card edge was found within the margin zone
-                    // (protects borderless floating text/clock widgets from ever being stretched!)
-                    val insetL = if (leftSample >= 0 && rightSample >= 0) {
-                        ((leftSample.toFloat() / SAMPLE_W) * virtW).roundToInt()
-                    } else 0
-                    val insetR = if (leftSample >= 0 && rightSample >= 0) {
-                        ((rightSample.toFloat() / SAMPLE_W) * virtW).roundToInt()
-                    } else 0
-                    val insetT = if (topSample >= 0 && bottomSample >= 0) {
-                        ((topSample.toFloat() / SAMPLE_H) * virtH).roundToInt()
-                    } else 0
-                    val insetB = if (topSample >= 0 && bottomSample >= 0) {
-                        ((bottomSample.toFloat() / SAMPLE_H) * virtH).roundToInt()
-                    } else 0
+                    val lRatio = if (leftSample >= 0 && rightSample >= 0) {
+                        leftSample.toFloat() / SAMPLE_W
+                    } else 0f
+                    val rRatio = if (leftSample >= 0 && rightSample >= 0) {
+                        rightSample.toFloat() / SAMPLE_W
+                    } else 0f
+                    val tRatio = if (topSample >= 0 && bottomSample >= 0) {
+                        topSample.toFloat() / SAMPLE_H
+                    } else 0f
+                    val bRatio = if (topSample >= 0 && bottomSample >= 0) {
+                        bottomSample.toFloat() / SAMPLE_H
+                    } else 0f
 
-                    Rect(insetL, insetT, insetR, insetB)
+                    NormalizedWidgetInsets(lRatio, tRatio, rRatio, bRatio)
                 } finally {
                     bmp.recycle()
                 }
-            }.getOrDefault(Rect())
+            }.getOrNull()
         }
     }
 }

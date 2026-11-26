@@ -50,6 +50,7 @@ class LockScreenOverlayService : AccessibilityService() {
 
     private var currentHostedSignature: String = ""
     private var currentShelfBelow: Boolean? = null
+    private val cachedHostedContainers = HashMap<Int, AlignedHostedWidgetContainer>()
     private val mainHandler = Handler(Looper.getMainLooper())
     private var previewUntilMillis: Long = 0L
 
@@ -127,7 +128,8 @@ class LockScreenOverlayService : AccessibilityService() {
                 Intent.ACTION_SCREEN_ON -> {
                     val km = getSystemService(KeyguardManager::class.java)
                     lastKnownDeviceLocked = km?.isDeviceLocked == true
-                    evaluateVisibilityAndRefresh(rebuildViews = true, forceRebindHosted = true)
+                    // Reuse existing hosted AppWidgetHostViews on screen wake -> zero reload flash!
+                    evaluateVisibilityAndRefresh(rebuildViews = true, forceRebindHosted = false)
                 }
                 Intent.ACTION_USER_PRESENT -> {
                     hideAllOverlays()
@@ -162,7 +164,7 @@ class LockScreenOverlayService : AccessibilityService() {
         registerReceiver(screenReceiver, filter)
 
         ensureOverlayAttached()
-        evaluateVisibilityAndRefresh(rebuildViews = true, forceRebindHosted = true)
+        evaluateVisibilityAndRefresh(rebuildViews = true, forceRebindHosted = false)
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
@@ -446,6 +448,7 @@ class LockScreenOverlayService : AccessibilityService() {
         shelfFrame = null
         hostedListContainer = null
         layoutParams = null
+        cachedHostedContainers.clear()
         currentHostedSignature = ""
         currentShelfBelow = null
     }
@@ -570,7 +573,7 @@ class LockScreenOverlayService : AccessibilityService() {
             targetWidthPx = targetWidthPx,
             firstTopMarginPx = firstHostedTopMargin,
             betweenMarginPx = spacingPx,
-            force = forceRebindHosted || becameVisible
+            force = forceRebindHosted
         )
 
         if (becameVisible) {
@@ -632,6 +635,12 @@ class LockScreenOverlayService : AccessibilityService() {
         force: Boolean
     ) {
         val listLayout = hostedListContainer ?: return
+        val allConfiguredIds = cfg.hostedWidgets.map { it.appWidgetId }.toHashSet()
+        cachedHostedContainers.keys.retainAll(allConfiguredIds)
+        if (force) {
+            cachedHostedContainers.clear()
+        }
+
         val enabledEntries = cfg.hostedWidgets.filter { it.enabled }
 
         if (enabledEntries.isEmpty()) {
@@ -643,7 +652,7 @@ class LockScreenOverlayService : AccessibilityService() {
 
         val sig = enabledEntries.joinToString("|") { "${it.appWidgetId}" }
 
-        if (sig == currentHostedSignature && listLayout.childCount == enabledEntries.size && !force) {
+        if (!force && sig == currentHostedSignature && listLayout.childCount == enabledEntries.size) {
             for (i in enabledEntries.indices) {
                 val entry = enabledEntries[i]
                 val wrapper = listLayout.getChildAt(i) as? AlignedHostedWidgetContainer ?: continue
@@ -657,7 +666,9 @@ class LockScreenOverlayService : AccessibilityService() {
                     wrapper.layoutParams = lp
                 }
                 wrapper.updateAlignmentConfig(
+                    heightDp = entry.heightDp,
                     scalePercent = entry.scalePercent,
+                    widthPercent = cfg.widgetWidthPercent,
                     radiusDp = cfg.widgetCornerRadiusDp,
                     autoAlign = cfg.autoAlignHostedWidgetEdges,
                     trimDp = entry.extraTrimDp
@@ -668,39 +679,58 @@ class LockScreenOverlayService : AccessibilityService() {
         }
 
         listLayout.removeAllViews()
-        val density = resources.displayMetrics.density.coerceAtLeast(1f)
 
         var addedCount = 0
         enabledEntries.forEachIndexed { idx, entry ->
-            val scale = (entry.scalePercent / 100f).coerceIn(0.75f, 1f)
-            val virtualWidthPx = (targetWidthPx / scale).roundToInt()
-            val virtualHeightPx = (dpToPx(entry.heightDp) / scale).roundToInt()
-            val virtualWidthDp = (virtualWidthPx / density).roundToInt().coerceAtLeast(390)
-            val virtualHeightDp = (virtualHeightPx / density).roundToInt().coerceAtLeast(60)
+            val desiredH = dpToPx(entry.heightDp)
+            val desiredTop = if (idx == 0) firstTopMarginPx else betweenMarginPx
 
-            val hostView = LockDockWidgetHostManager.createConfiguredHostView(
-                context = this,
-                appWidgetId = entry.appWidgetId,
-                heightDp = virtualHeightDp,
-                virtualWidthDp = virtualWidthDp
-            ) ?: return@forEachIndexed
-
-            val wrapper = AlignedHostedWidgetContainer(this).apply {
-                layoutParams = LinearLayout.LayoutParams(
-                    targetWidthPx,
-                    dpToPx(entry.heightDp)
-                ).apply {
-                    topMargin = if (idx == 0) firstTopMarginPx else betweenMarginPx
+            val wrapper = cachedHostedContainers[entry.appWidgetId]?.also { existing ->
+                (existing.parent as? android.view.ViewGroup)?.removeView(existing)
+                existing.layoutParams = LinearLayout.LayoutParams(targetWidthPx, desiredH).apply {
+                    topMargin = desiredTop
                 }
-                bindHostView(
-                    view = hostView,
-                    widgetId = entry.appWidgetId,
+                existing.updateAlignmentConfig(
+                    heightDp = entry.heightDp,
                     scalePercent = entry.scalePercent,
+                    widthPercent = cfg.widgetWidthPercent,
                     radiusDp = cfg.widgetCornerRadiusDp,
                     autoAlign = cfg.autoAlignHostedWidgetEdges,
                     trimDp = entry.extraTrimDp
                 )
+            } ?: run {
+                val (canonicalW, canonicalH) = LockDockWidgetHostManager.computeCanonicalWidgetSizeDp(
+                    context = this,
+                    heightDp = entry.heightDp,
+                    scalePercent = entry.scalePercent,
+                    widthPercent = cfg.widgetWidthPercent
+                )
+                val hostView = LockDockWidgetHostManager.createConfiguredHostView(
+                    context = this,
+                    appWidgetId = entry.appWidgetId,
+                    heightDp = canonicalH,
+                    virtualWidthDp = canonicalW
+                ) ?: return@forEachIndexed
+
+                AlignedHostedWidgetContainer(this).apply {
+                    layoutParams = LinearLayout.LayoutParams(targetWidthPx, desiredH).apply {
+                        topMargin = desiredTop
+                    }
+                    bindHostView(
+                        view = hostView,
+                        widgetId = entry.appWidgetId,
+                        heightDp = entry.heightDp,
+                        scalePercent = entry.scalePercent,
+                        widthPercent = cfg.widgetWidthPercent,
+                        radiusDp = cfg.widgetCornerRadiusDp,
+                        autoAlign = cfg.autoAlignHostedWidgetEdges,
+                        trimDp = entry.extraTrimDp
+                    )
+                }.also { created ->
+                    cachedHostedContainers[entry.appWidgetId] = created
+                }
             }
+
             listLayout.addView(wrapper)
             addedCount++
         }
@@ -712,7 +742,7 @@ class LockScreenOverlayService : AccessibilityService() {
     private fun triggerPreview(durationMs: Long) {
         dismissedUntilScreenOff = false
         previewUntilMillis = System.currentTimeMillis() + durationMs
-        evaluateVisibilityAndRefresh(rebuildViews = true, forceRebindHosted = true)
+        evaluateVisibilityAndRefresh(rebuildViews = true, forceRebindHosted = false)
         mainHandler.postDelayed(
             { evaluateVisibilityAndRefresh(rebuildViews = false, forceRebindHosted = false) },
             durationMs + 100L

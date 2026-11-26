@@ -5,12 +5,31 @@ import android.appwidget.AppWidgetHostView
 import android.appwidget.AppWidgetManager
 import android.appwidget.AppWidgetProviderInfo
 import android.content.Context
+import android.graphics.Rect
 import android.os.Build
 import android.os.Bundle
 import android.os.Process
 import android.util.SizeF
 import android.widget.RemoteViews
+import java.util.concurrent.ConcurrentHashMap
+import kotlin.math.abs
 import kotlin.math.roundToInt
+
+data class NormalizedWidgetInsets(
+    val leftRatio: Float,
+    val topRatio: Float,
+    val rightRatio: Float,
+    val bottomRatio: Float
+) {
+    fun toPixelRect(virtW: Int, virtH: Int): Rect {
+        return Rect(
+            (leftRatio * virtW).roundToInt(),
+            (topRatio * virtH).roundToInt(),
+            (rightRatio * virtW).roundToInt(),
+            (bottomRatio * virtH).roundToInt()
+        )
+    }
+}
 
 class LockDockHostView(context: Context) : AppWidgetHostView(context) {
     private var targetCornerRadiusPx: Float = 0f
@@ -65,16 +84,21 @@ data class SystemWidgetCandidate(
 
 /**
  * Shared singleton AppWidgetHost manager ensuring 100% of installed widgets
- * (including 5x2 widgets like KM 桌面行事曆小工具) can be discovered, bound,
- * configured, previewed inside LockDock, and rendered on the lock screen.
+ * (including 5x2 widgets like KM 桌面行事曆小工具 and 發票存摺) can be bound, cached,
+ * and displayed with zero redundant updateAppWidgetOptions reloads or inset jumps.
  */
 object LockDockWidgetHostManager {
 
     const val HOST_ID = 2026
+    private const val CACHE_PREFS = "lockdock_widget_host_cache"
+
     @Volatile
     private var sharedHost: AppWidgetHost? = null
     @Volatile
     private var listening = false
+
+    private val lastSentSizeByWidgetId = ConcurrentHashMap<Int, Pair<Int, Int>>()
+    private val cachedInsetsByWidgetId = ConcurrentHashMap<Int, NormalizedWidgetInsets>()
 
     fun getHost(context: Context): AppWidgetHost {
         val appCtx = context.applicationContext
@@ -104,6 +128,108 @@ object LockDockWidgetHostManager {
                 listening = true
             }
         }
+    }
+
+    fun computeCanonicalWidgetSizeDp(
+        context: Context,
+        heightDp: Int,
+        scalePercent: Int,
+        widthPercent: Int
+    ): Pair<Int, Int> {
+        val dm = context.resources.displayMetrics
+        val density = dm.density.coerceAtLeast(1f)
+        val screenWidthDp = dm.widthPixels / density
+        val scale = (scalePercent / 100f).coerceIn(0.75f, 1f)
+        val wFraction = widthPercent.coerceIn(
+            WidgetCornerStyler.MIN_WIDTH_PERCENT,
+            WidgetCornerStyler.MAX_WIDTH_PERCENT
+        ) / 100f
+        val wDp = ((screenWidthDp * wFraction) / scale).roundToInt().coerceIn(390, 520)
+        val hDp = (heightDp / scale).roundToInt().coerceIn(80, 420)
+        return wDp to hDp
+    }
+
+    fun getCachedInsets(context: Context, appWidgetId: Int): NormalizedWidgetInsets? {
+        if (appWidgetId < 0) return null
+        cachedInsetsByWidgetId[appWidgetId]?.let { return it }
+        val prefs = context.applicationContext.getSharedPreferences(CACHE_PREFS, Context.MODE_PRIVATE)
+        val raw = prefs.getString("insets_$appWidgetId", null) ?: return null
+        val parts = raw.split(',')
+        if (parts.size != 4) return null
+        val parsed = runCatching {
+            NormalizedWidgetInsets(
+                leftRatio = parts[0].toFloat().coerceIn(0f, 0.25f),
+                topRatio = parts[1].toFloat().coerceIn(0f, 0.25f),
+                rightRatio = parts[2].toFloat().coerceIn(0f, 0.25f),
+                bottomRatio = parts[3].toFloat().coerceIn(0f, 0.25f)
+            )
+        }.getOrNull() ?: return null
+        cachedInsetsByWidgetId[appWidgetId] = parsed
+        return parsed
+    }
+
+    fun saveCachedInsets(context: Context, appWidgetId: Int, insets: NormalizedWidgetInsets) {
+        if (appWidgetId < 0) return
+        cachedInsetsByWidgetId[appWidgetId] = insets
+        val raw = "${insets.leftRatio},${insets.topRatio},${insets.rightRatio},${insets.bottomRatio}"
+        context.applicationContext
+            .getSharedPreferences(CACHE_PREFS, Context.MODE_PRIVATE)
+            .edit()
+            .putString("insets_$appWidgetId", raw)
+            .apply()
+    }
+
+    fun clearWidgetCache(context: Context, appWidgetId: Int) {
+        lastSentSizeByWidgetId.remove(appWidgetId)
+        cachedInsetsByWidgetId.remove(appWidgetId)
+        context.applicationContext
+            .getSharedPreferences(CACHE_PREFS, Context.MODE_PRIVATE)
+            .edit()
+            .remove("size_$appWidgetId")
+            .remove("insets_$appWidgetId")
+            .apply()
+    }
+
+    private fun getLastSentSize(
+        context: Context,
+        mgr: AppWidgetManager,
+        appWidgetId: Int
+    ): Pair<Int, Int>? {
+        lastSentSizeByWidgetId[appWidgetId]?.let { return it }
+        val prefs = context.applicationContext.getSharedPreferences(CACHE_PREFS, Context.MODE_PRIVATE)
+        val raw = prefs.getString("size_$appWidgetId", null)
+        if (raw != null) {
+            val parts = raw.split('x')
+            if (parts.size == 2) {
+                val w = parts[0].toIntOrNull()
+                val h = parts[1].toIntOrNull()
+                if (w != null && h != null) {
+                    val pair = w to h
+                    lastSentSizeByWidgetId[appWidgetId] = pair
+                    return pair
+                }
+            }
+        }
+        val existingOpts = runCatching { mgr.getAppWidgetOptions(appWidgetId) }.getOrNull()
+        if (existingOpts != null) {
+            val minW = existingOpts.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH, -1)
+            val minH = existingOpts.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT, -1)
+            if (minW > 0 && minH > 0) {
+                val pair = minW to minH
+                lastSentSizeByWidgetId[appWidgetId] = pair
+                return pair
+            }
+        }
+        return null
+    }
+
+    private fun recordSentSize(context: Context, appWidgetId: Int, w: Int, h: Int) {
+        lastSentSizeByWidgetId[appWidgetId] = w to h
+        context.applicationContext
+            .getSharedPreferences(CACHE_PREFS, Context.MODE_PRIVATE)
+            .edit()
+            .putString("size_$appWidgetId", "${w}x${h}")
+            .apply()
     }
 
     fun loadAllInstalledWidgets(context: Context): List<SystemWidgetCandidate> {
@@ -158,7 +284,6 @@ object LockDockWidgetHostManager {
             }
             .sortedWith(
                 compareByDescending<SystemWidgetCandidate> {
-                    // Highlight KM / Calendar widgets at top for convenience
                     val key = "${it.appLabel} ${it.widgetLabel} ${it.packageName}".lowercase()
                     key.contains("km") || key.contains("行事曆") || key.contains("月曆")
                 }.thenBy { it.appLabel.lowercase() }
@@ -166,10 +291,6 @@ object LockDockWidgetHostManager {
             )
     }
 
-    /**
-     * Creates an AppWidgetHostView and reports full 5-column width options (420dp)
-     * so 5x2 widgets like KM 桌面行事曆小工具 render their complete two-pane layout cleanly.
-     */
     fun createConfiguredHostView(
         context: Context,
         appWidgetId: Int,
@@ -191,6 +312,11 @@ object LockDockWidgetHostManager {
         }
     }
 
+    /**
+     * Strictly deduplicated per appWidgetId: never calls updateAppWidgetSize() or
+     * mgr.updateAppWidgetOptions() when the widget's dp dimensions have not changed,
+     * preventing 3rd-party widgets (such as 發票存摺) from re-triggering their loading state.
+     */
     fun applyWidgetSizeOptions(
         mgr: AppWidgetManager,
         view: AppWidgetHostView,
@@ -198,8 +324,17 @@ object LockDockWidgetHostManager {
         widthDp: Int,
         heightDp: Int
     ) {
+        if (appWidgetId < 0) return
         val w = widthDp.coerceIn(240, 520)
         val h = heightDp.coerceIn(80, 420)
+        val appCtx = view.context.applicationContext
+
+        val last = getLastSentSize(appCtx, mgr, appWidgetId)
+        if (last != null && abs(last.first - w) < 4 && abs(last.second - h) < 4) {
+            return
+        }
+        recordSentSize(appCtx, appWidgetId, w, h)
+
         runCatching {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 view.updateAppWidgetSize(
@@ -207,18 +342,14 @@ object LockDockWidgetHostManager {
                     listOf(SizeF(w.toFloat(), h.toFloat()))
                 )
             } else {
-                @Suppress("DEPRECATION")
-                view.updateAppWidgetSize(Bundle(), w, h, w, h)
+                val opts = Bundle().apply {
+                    putInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH, w)
+                    putInt(AppWidgetManager.OPTION_APPWIDGET_MAX_WIDTH, w)
+                    putInt(AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT, h)
+                    putInt(AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT, h)
+                }
+                mgr.updateAppWidgetOptions(appWidgetId, opts)
             }
-        }
-        runCatching {
-            val opts = Bundle().apply {
-                putInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH, w)
-                putInt(AppWidgetManager.OPTION_APPWIDGET_MAX_WIDTH, w)
-                putInt(AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT, h)
-                putInt(AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT, h)
-            }
-            mgr.updateAppWidgetOptions(appWidgetId, opts)
         }
     }
 }

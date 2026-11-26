@@ -297,10 +297,9 @@ fun LockDockStudioScreen(
                     hasCalendarPerm = KmCalendarHelper.hasCalendarPermission(context)
                     batteryInfo = DeviceStateHelper.getBatteryStatus(context)
                     allSystemWidgets = LockDockWidgetHostManager.loadAllInstalledWidgets(context)
-                    resumeGeneration++
                 }
                 Lifecycle.Event.ON_PAUSE -> {
-                    LockScreenOverlayService.requestRefresh(forceRebindHosted = true)
+                    LockScreenOverlayService.requestRefresh(forceRebindHosted = false)
                 }
                 else -> {}
             }
@@ -557,6 +556,7 @@ fun LockDockStudioScreen(
                                         LockDockWidgetHostManager.getHost(context)
                                             .deleteAppWidgetId(target.appWidgetId)
                                     }
+                                    LockDockWidgetHostManager.clearWidgetCache(context, target.appWidgetId)
                                     val nextList = config.hostedWidgets.filterIndexed { i, _ -> i != removeIdx }
                                     updateAndSave(config.copy(hostedWidgets = nextList))
                                     resumeGeneration++
@@ -2223,25 +2223,25 @@ private fun IphoneLockScreenPreviewCard(
                         .fillMaxWidth()
                         .height(entry.heightDp.dp),
                     factory = { ctx ->
-                        val density = ctx.resources.displayMetrics.density.coerceAtLeast(1f)
-                        val scale = (entry.scalePercent / 100f).coerceIn(0.75f, 1f)
-                        val approxWidthPx = ((ctx.resources.displayMetrics.widthPixels - 36 * density) * unifiedWidthFraction).roundToInt()
-                        val virtW = (approxWidthPx / scale).roundToInt()
-                        val virtH = ((entry.heightDp * density) / scale).roundToInt()
-                        val virtWDp = (virtW / density).roundToInt().coerceAtLeast(390)
-                        val virtHDp = (virtH / density).roundToInt().coerceAtLeast(60)
-
+                        val (canonicalW, canonicalH) = LockDockWidgetHostManager.computeCanonicalWidgetSizeDp(
+                            context = ctx,
+                            heightDp = entry.heightDp,
+                            scalePercent = entry.scalePercent,
+                            widthPercent = config.widgetWidthPercent
+                        )
                         val hv = LockDockWidgetHostManager.createConfiguredHostView(
                             context = ctx,
                             appWidgetId = entry.appWidgetId,
-                            heightDp = virtHDp,
-                            virtualWidthDp = virtWDp
+                            heightDp = canonicalH,
+                            virtualWidthDp = canonicalW
                         )
                         AlignedHostedWidgetContainer(ctx).apply {
                             bindHostView(
                                 view = hv,
                                 widgetId = entry.appWidgetId,
+                                heightDp = entry.heightDp,
                                 scalePercent = entry.scalePercent,
+                                widthPercent = config.widgetWidthPercent,
                                 radiusDp = hostedRadiusDp,
                                 autoAlign = config.autoAlignHostedWidgetEdges,
                                 trimDp = entry.extraTrimDp
@@ -2250,7 +2250,9 @@ private fun IphoneLockScreenPreviewCard(
                     },
                     update = { wrapper ->
                         wrapper.updateAlignmentConfig(
+                            heightDp = entry.heightDp,
                             scalePercent = entry.scalePercent,
+                            widthPercent = config.widgetWidthPercent,
                             radiusDp = hostedRadiusDp,
                             autoAlign = config.autoAlignHostedWidgetEdges,
                             trimDp = entry.extraTrimDp

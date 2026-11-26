@@ -16,8 +16,8 @@ android {
         minSdk = 31
         // Targeted for Google Pixel 10 Pro XL running Android 17 (API 37)
         targetSdk = 37
-        versionCode = 10
-        versionName = "2.0.0"
+        versionCode = 11
+        versionName = "2.1.0"
     }
 
     signingConfigs {
